@@ -1,0 +1,47 @@
+:root {
+  --hs-bg: #faf7f2;
+  --hs-text: #2b241d;
+  --hs-accent: #a8672e;
+  --hs-muted: #8a8074;
+  --hs-border: #e3dbcd;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--hs-bg);
+  color: var(--hs-text);
+}
+
+header {
+  padding: 2rem 1.5rem 1rem;
+  text-align: center;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  letter-spacing: 0.02em;
+}
+
+header p {
+  color: var(--hs-muted);
+  margin: 0.25rem 0 0;
+}
+
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.card {
+  border: 1px solid var(--hs-border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  background: #fff;
+}

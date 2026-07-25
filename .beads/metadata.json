@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "houstory",
+  "project_id": "c3ba1cc8-90c6-4fd9-9fd2-1ee4cd38d20f"
+}
