@@ -24,6 +24,7 @@
       <p id="errorBox" class="error" style="display:none;"></p>
     </div>
 
+    <div id="needsReview"></div>
     <div id="results"></div>
   </main>
 
@@ -37,8 +38,16 @@
     const errorBox = document.getElementById("errorBox");
     const uploadBtn = document.getElementById("uploadBtn");
     const resultsEl = document.getElementById("results");
+    const needsReviewEl = document.getElementById("needsReview");
+
+    const CHAPTER_TYPES = ["renovation", "landscaping", "paint", "appliance", "research", "general"];
 
     let propertyId = null;
+    let currentUserId = null;
+    // Chapters available as "attach to existing" targets. Refreshed after
+    // loading and after every new chapter this page creates, so a batch of
+    // photos can all land in the same freshly-created chapter.
+    let openChapters = [];
 
     function showError(msg) {
       errorBox.textContent = msg;
@@ -55,19 +64,124 @@
     }
 
     function setStatus(card, text) {
-      card.querySelector(".status").textContent = text;
+      const status = card.querySelector(".status");
+      if (status) status.textContent = text;
+      else card.innerHTML = `<p class="status">${text}</p>`;
     }
 
-    function renderSuggestion(card, suggestion) {
-      const fields = suggestion.fields && Object.keys(suggestion.fields).length
-        ? `<ul>${Object.entries(suggestion.fields).map(([k, v]) => `<li>${k}: ${v}</li>`).join("")}</ul>`
+    async function refreshOpenChapters() {
+      const { data, error } = await sb
+        .from("chapters")
+        .select("id, title, chapter_type")
+        .eq("property_id", propertyId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false });
+
+      if (!error) openChapters = data || [];
+    }
+
+    function chapterOptionsHtml(selectedId) {
+      return openChapters
+        .map(c => `<option value="${c.id}" ${c.id === selectedId ? "selected" : ""}>${c.title} (${c.chapter_type})</option>`)
+        .join("");
+    }
+
+    function renderReviewForm(card, mediaId, suggestion, imageUrl) {
+      const fieldEntries = Object.entries(suggestion.fields || {});
+      const fieldsHtml = fieldEntries
+        .map(([k, v]) => `
+          <label for="f_${k}_${mediaId}">${k}</label>
+          <input type="text" id="f_${k}_${mediaId}" data-field-key="${k}" value="${String(v).replace(/"/g, "&quot;")}">
+        `)
+        .join("");
+
+      const typeOptionsHtml = CHAPTER_TYPES
+        .map(t => `<option value="${t}" ${t === suggestion.chapter_type ? "selected" : ""}>${t}</option>`)
+        .join("");
+
+      const imgHtml = imageUrl
+        ? `<img src="${imageUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`
         : "";
+
       card.innerHTML = `
-        <strong>${suggestion.title}</strong>
-        <p style="color: var(--hs-muted);">${suggestion.chapter_type}</p>
-        <p>${suggestion.description}</p>
-        ${fields}
+        ${imgHtml}
+        <p class="status">Review before saving</p>
+        <label>Chapter type</label>
+        <select class="rv-type">${typeOptionsHtml}</select>
+        <label>Title</label>
+        <input type="text" class="rv-title" value="${suggestion.title.replace(/"/g, "&quot;")}">
+        <label>Description</label>
+        <textarea class="rv-description" rows="2">${suggestion.description}</textarea>
+        ${fieldsHtml}
+        <label>Save to</label>
+        <select class="rv-target">
+          <option value="__new__">Create new chapter</option>
+          ${openChapters.length ? `<optgroup label="Attach to existing">${chapterOptionsHtml()}</optgroup>` : ""}
+        </select>
+        <button type="button" class="rv-save">Save</button>
+        <p class="rv-error error" style="display:none;"></p>
       `;
+
+      card.querySelector(".rv-save").addEventListener("click", async () => {
+        const saveBtn = card.querySelector(".rv-save");
+        const rvError = card.querySelector(".rv-error");
+        rvError.style.display = "none";
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+
+        const chapterType = card.querySelector(".rv-type").value;
+        const title = card.querySelector(".rv-title").value.trim();
+        const description = card.querySelector(".rv-description").value.trim();
+        const target = card.querySelector(".rv-target").value;
+        const fields = {};
+        card.querySelectorAll("[data-field-key]").forEach(input => {
+          if (input.value.trim() !== "") fields[input.dataset.fieldKey] = input.value.trim();
+        });
+
+        let chapterId = target;
+
+        if (target === "__new__") {
+          const { data: newChapter, error: chapterError } = await sb
+            .from("chapters")
+            .insert({
+              property_id: propertyId,
+              chapter_type: chapterType,
+              title,
+              description,
+              metadata: fields,
+              created_by: currentUserId,
+            })
+            .select()
+            .single();
+
+          if (chapterError) {
+            rvError.textContent = chapterError.message;
+            rvError.style.display = "block";
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Save";
+            return;
+          }
+
+          chapterId = newChapter.id;
+          openChapters.unshift({ id: newChapter.id, title: newChapter.title, chapter_type: newChapter.chapter_type });
+        }
+
+        const { error: mediaError } = await sb
+          .from("media")
+          .update({ chapter_id: chapterId, status: "confirmed" })
+          .eq("id", mediaId);
+
+        if (mediaError) {
+          rvError.textContent = mediaError.message;
+          rvError.style.display = "block";
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save";
+          return;
+        }
+
+        const savedChapter = openChapters.find(c => c.id === chapterId);
+        card.innerHTML = `<p class="status">Saved to "${savedChapter ? savedChapter.title : title}"</p>`;
+      });
     }
 
     document.addEventListener("DOMContentLoaded", async () => {
@@ -76,6 +190,7 @@
         window.location.href = "login.html";
         return;
       }
+      currentUserId = session.user.id;
 
       const { data: properties, error } = await sb
         .from("properties")
@@ -90,7 +205,52 @@
       }
 
       propertyId = properties[0].id;
+      await refreshOpenChapters();
+      await loadPendingReview();
     });
+
+    // Photos that were uploaded (and analyzed) in an earlier visit but never
+    // got confirmed into a chapter - e.g. the page was closed before saving.
+    // Without this, they'd be stuck forever with no way to revisit them.
+    async function loadPendingReview() {
+      const { data: pending, error } = await sb
+        .from("media")
+        .select("id, storage_path, ai_description, ai_extracted, caption")
+        .eq("property_id", propertyId)
+        .eq("status", "pending_review")
+        .is("chapter_id", null)
+        .order("created_at", { ascending: true });
+
+      if (error || !pending || pending.length === 0) return;
+
+      const heading = document.createElement("h2");
+      heading.textContent = `Needs review (${pending.length})`;
+      heading.style.fontSize = "1rem";
+      needsReviewEl.appendChild(heading);
+
+      for (const row of pending) {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.marginTop = "1rem";
+        needsReviewEl.appendChild(card);
+
+        const { data: signed } = await sb.storage
+          .from("houstory-media")
+          .createSignedUrl(row.storage_path, 3600);
+
+        const suggestion = row.ai_extracted && row.ai_extracted.suggested;
+
+        if (!suggestion) {
+          card.innerHTML = `
+            ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+            <p class="status">Not analyzed yet.</p>
+          `;
+          continue;
+        }
+
+        renderReviewForm(card, row.id, suggestion, signed ? signed.signedUrl : null);
+      }
+    }
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -160,7 +320,7 @@
           continue;
         }
 
-        renderSuggestion(card, analysis.suggestion);
+        renderReviewForm(card, mediaRow.id, analysis.suggestion, URL.createObjectURL(file));
       }
 
       uploadBtn.disabled = false;
