@@ -50,13 +50,14 @@ const CATEGORIZE_TOOL = {
         enum: ["renovation", "landscaping", "paint", "appliance", "research", "general"],
         description: "Best-fit category for this photo.",
       },
-      title: {
-        type: "string",
-        description: "A short chapter title, e.g. 'Kitchen Cabinet Repaint'.",
-      },
       description: {
         type: "string",
-        description: "1-3 sentence natural-language description of what's in the photo.",
+        description: "1-3 sentence natural-language description of what's in THIS SPECIFIC photo.",
+      },
+      suggested_chapter_name: {
+        type: "string",
+        description:
+          "A short, GENERIC name for the broader ongoing chapter/story this photo might belong to if grouped with many similar photos over time - e.g. 'Kitchen Renovation', 'Paint Colors', 'Landscaping', 'Exterior Photos'. This is NOT a caption of this one photo - it's a project/theme name a human would recognize and want to keep adding photos to.",
       },
       fields: {
         type: "object",
@@ -64,7 +65,7 @@ const CATEGORIZE_TOOL = {
           "Type-specific structured fields when identifiable. paint: brand, color_name, color_code, hex, sheen, room. appliance: brand, model_number, serial_number. Omit fields you can't confidently read from the photo.",
       },
     },
-    required: ["chapter_type", "title", "description"],
+    required: ["chapter_type", "description", "suggested_chapter_name"],
   },
 };
 
@@ -136,7 +137,8 @@ serve(async (req: Request): Promise<Response> => {
               text:
                 "This photo is for Houstory, an app for tracking a home's renovations, landscaping, paint colors, appliances, and history. " +
                 userNote +
-                " Categorize this photo.",
+                " Categorize this photo. Remember: 'description' is about this one photo only. " +
+                "'suggested_chapter_name' should be a broader project/theme name a human would want to keep filing similar photos under over time, not a description of this single photo.",
             },
           ],
         },

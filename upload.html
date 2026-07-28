@@ -103,14 +103,15 @@
         ? `<img src="${imageUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`
         : "";
 
+      // suggestion.description is about THIS PHOTO only. suggested_chapter_name
+      // is a separate, broader guess at what ongoing chapter/theme this photo
+      // might belong to - it's only used as a starting point for the "New
+      // chapter name" field below, never conflated with the photo's own
+      // description. See houstory chat 2026-07-28 for why these were split.
       card.innerHTML = `
         ${imgHtml}
         <p class="status">Review before saving</p>
-        <label>Category</label>
-        <select class="rv-type">${typeOptionsHtml}</select>
-        <label>Title</label>
-        <input type="text" class="rv-title" value="${suggestion.title.replace(/"/g, "&quot;")}">
-        <label>Description</label>
+        <label>Photo description</label>
         <textarea class="rv-description" rows="2">${suggestion.description}</textarea>
         ${fieldsHtml}
         <label>Save to</label>
@@ -118,9 +119,23 @@
           <option value="__new__">Create new chapter</option>
           ${openChapters.length ? `<optgroup label="Attach to existing">${chapterOptionsHtml()}</optgroup>` : ""}
         </select>
+        <div class="rv-new-chapter-fields">
+          <label>New chapter name</label>
+          <input type="text" class="rv-chapter-name" value="${(suggestion.suggested_chapter_name || "").replace(/"/g, "&quot;")}" placeholder="e.g. Kitchen Renovation, New Pool">
+          <label>Category</label>
+          <select class="rv-type">${typeOptionsHtml}</select>
+        </div>
         <button type="button" class="rv-save">Save</button>
         <p class="rv-error error" style="display:none;"></p>
       `;
+
+      const targetSelect = card.querySelector(".rv-target");
+      const newChapterFields = card.querySelector(".rv-new-chapter-fields");
+      const syncNewChapterFieldsVisibility = () => {
+        newChapterFields.style.display = targetSelect.value === "__new__" ? "block" : "none";
+      };
+      targetSelect.addEventListener("change", syncNewChapterFieldsVisibility);
+      syncNewChapterFieldsVisibility();
 
       card.querySelector(".rv-save").addEventListener("click", async () => {
         const saveBtn = card.querySelector(".rv-save");
@@ -129,10 +144,8 @@
         saveBtn.disabled = true;
         saveBtn.textContent = "Saving…";
 
-        const chapterType = card.querySelector(".rv-type").value;
-        const title = card.querySelector(".rv-title").value.trim();
         const description = card.querySelector(".rv-description").value.trim();
-        const target = card.querySelector(".rv-target").value;
+        const target = targetSelect.value;
         const fields = {};
         card.querySelectorAll("[data-field-key]").forEach(input => {
           if (input.value.trim() !== "") fields[input.dataset.fieldKey] = input.value.trim();
@@ -141,13 +154,23 @@
         let chapterId = target;
 
         if (target === "__new__") {
+          const chapterName = card.querySelector(".rv-chapter-name").value.trim();
+          const chapterType = card.querySelector(".rv-type").value;
+
+          if (!chapterName) {
+            rvError.textContent = "New chapter name is required.";
+            rvError.style.display = "block";
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Save";
+            return;
+          }
+
           const { data: newChapter, error: chapterError } = await sb
             .from("chapters")
             .insert({
               property_id: propertyId,
               chapter_type: chapterType,
-              title,
-              description,
+              title: chapterName,
               metadata: fields,
               created_by: currentUserId,
             })
@@ -168,7 +191,7 @@
 
         const { error: mediaError } = await sb
           .from("media")
-          .update({ chapter_id: chapterId, status: "confirmed" })
+          .update({ chapter_id: chapterId, status: "confirmed", ai_description: description })
           .eq("id", mediaId);
 
         if (mediaError) {
@@ -180,7 +203,7 @@
         }
 
         const savedChapter = openChapters.find(c => c.id === chapterId);
-        card.innerHTML = `<p class="status">Saved to "${savedChapter ? savedChapter.title : title}"</p>`;
+        card.innerHTML = `<p class="status">Saved to "${savedChapter ? savedChapter.title : ""}"</p>`;
       });
     }
 
