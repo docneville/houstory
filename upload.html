@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory — Upload</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p><a href="app.html">&larr; Back</a></p>
+  </header>
+  <main>
+    <div class="card">
+      <form id="uploadForm">
+        <label for="files">Photos</label>
+        <input type="file" id="files" accept="image/*" multiple required>
+        <label for="note">Note (optional, applied to all photos in this batch)</label>
+        <textarea id="note" rows="2" placeholder="e.g. used in kids' bedroom, kitchen reno day 1"></textarea>
+        <button type="submit" id="uploadBtn">Upload &amp; analyze</button>
+      </form>
+      <p id="errorBox" class="error" style="display:none;"></p>
+    </div>
+
+    <div id="results"></div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const form = document.getElementById("uploadForm");
+    const errorBox = document.getElementById("errorBox");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const resultsEl = document.getElementById("results");
+
+    let propertyId = null;
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = "block";
+    }
+
+    function addResultCard(fileName) {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.marginTop = "1rem";
+      card.innerHTML = `<strong>${fileName}</strong><p class="status">Uploading…</p>`;
+      resultsEl.appendChild(card);
+      return card;
+    }
+
+    function setStatus(card, text) {
+      card.querySelector(".status").textContent = text;
+    }
+
+    function renderSuggestion(card, suggestion) {
+      const fields = suggestion.fields && Object.keys(suggestion.fields).length
+        ? `<ul>${Object.entries(suggestion.fields).map(([k, v]) => `<li>${k}: ${v}</li>`).join("")}</ul>`
+        : "";
+      card.innerHTML = `
+        <strong>${suggestion.title}</strong>
+        <p style="color: var(--hs-muted);">${suggestion.chapter_type}</p>
+        <p>${suggestion.description}</p>
+        ${fields}
+      `;
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        window.location.href = "login.html";
+        return;
+      }
+
+      const { data: properties, error } = await sb
+        .from("properties")
+        .select("id")
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (error || !properties || properties.length === 0) {
+        showError("No property set up yet - go back and create one first.");
+        uploadBtn.disabled = true;
+        return;
+      }
+
+      propertyId = properties[0].id;
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorBox.style.display = "none";
+      resultsEl.innerHTML = "";
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = "Working…";
+
+      const { data: { user } } = await sb.auth.getUser();
+      const note = document.getElementById("note").value.trim() || null;
+      const fileInput = document.getElementById("files");
+      const files = Array.from(fileInput.files);
+
+      for (const file of files) {
+        const card = addResultCard(file.name);
+
+        const storagePath = `${propertyId}/${crypto.randomUUID()}-${file.name}`;
+        const { error: uploadError } = await sb.storage
+          .from("houstory-media")
+          .upload(storagePath, file, { contentType: file.type });
+
+        if (uploadError) {
+          setStatus(card, `Upload failed: ${uploadError.message}`);
+          continue;
+        }
+
+        const { data: mediaRow, error: insertError } = await sb
+          .from("media")
+          .insert({
+            property_id: propertyId,
+            kind: "photo",
+            storage_path: storagePath,
+            caption: note,
+            uploaded_by: user.id,
+          })
+          .select()
+          .single();
+
+        if (insertError) {
+          setStatus(card, `Save failed: ${insertError.message}`);
+          continue;
+        }
+
+        setStatus(card, "Analyzing with Claude…");
+
+        // Using a raw fetch here rather than sb.functions.invoke() - invoke()
+        // was unreliably failing with a generic "Failed to send a request"
+        // on this endpoint specifically once it took a few seconds (image
+        // download + Claude call), while a plain fetch with the same
+        // headers worked fine.
+        const { data: { session } } = await sb.auth.getSession();
+        let analysis;
+        try {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-media`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${session.access_token}`,
+              "apikey": SUPABASE_ANON_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ media_id: mediaRow.id }),
+          });
+          analysis = await res.json();
+          if (!res.ok) throw new Error(analysis.error || `HTTP ${res.status}`);
+        } catch (analyzeError) {
+          setStatus(card, `Analysis failed: ${analyzeError.message}`);
+          continue;
+        }
+
+        renderSuggestion(card, analysis.suggestion);
+      }
+
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "Upload & analyze";
+    });
+  </script>
+</body>
+</html>
