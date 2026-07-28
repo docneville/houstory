@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory — Sign in</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p>Sign in</p>
+  </header>
+  <main>
+    <div class="card">
+      <form id="loginForm">
+        <label for="email">Email</label>
+        <input type="email" id="email" required autocomplete="username">
+        <label for="password">Password</label>
+        <input type="password" id="password" required autocomplete="current-password">
+        <button type="submit" id="loginBtn">Sign in</button>
+      </form>
+      <p id="errorBox" class="error" style="display:none;"></p>
+    </div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const form = document.getElementById("loginForm");
+    const errorBox = document.getElementById("errorBox");
+    const loginBtn = document.getElementById("loginBtn");
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = "block";
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (session) {
+        window.location.href = "app.html";
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorBox.style.display = "none";
+      loginBtn.disabled = true;
+      loginBtn.textContent = "Signing in…";
+
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        showError(error.message);
+        loginBtn.disabled = false;
+        loginBtn.textContent = "Sign in";
+        return;
+      }
+
+      window.location.href = "app.html";
+    });
+  </script>
+</body>
+</html>

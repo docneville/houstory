@@ -60,7 +60,12 @@ No build step — static HTML/CSS/JS served as-is. `package.json` only holds
 npm install                # only needed for one-off db scripts
 npx supabase db push       # apply migrations in supabase/migrations/
 npx supabase functions deploy <name>  # deploy an edge function
+python -m http.server 8080 # preview the static site locally
 ```
+
+Auth for local testing uses email+password (not magic link, to avoid
+depending on email-template/redirect-URL dashboard config) - Google
+sign-in is planned for Phase 2 (houstory-96t.11) to replace this.
 
 ## Architecture Overview
 

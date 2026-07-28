@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p id="propertyLabel">Loading…</p>
+  </header>
+  <main>
+    <div id="createPropertyCard" class="card" style="display:none;">
+      <p>Let's set up your home.</p>
+      <form id="propertyForm">
+        <label for="nickname">Nickname (optional)</label>
+        <input type="text" id="nickname" placeholder="e.g. The Granville House">
+        <label for="address_line1">Address line 1</label>
+        <input type="text" id="address_line1" required>
+        <label for="address_line2">Address line 2 (optional)</label>
+        <input type="text" id="address_line2">
+        <label for="city">City</label>
+        <input type="text" id="city" required>
+        <label for="state">State</label>
+        <input type="text" id="state" required>
+        <label for="postal_code">Postal code</label>
+        <input type="text" id="postal_code">
+        <button type="submit" id="createBtn">Create home</button>
+      </form>
+      <p id="createError" class="error" style="display:none;"></p>
+    </div>
+
+    <div id="chaptersCard" class="card" style="display:none;">
+      <p>Chapters</p>
+      <ul id="chapterList" class="chapter-list"></ul>
+      <p id="emptyState" style="display:none; color: var(--hs-muted);">
+        No chapters yet. Photo upload is coming next (houstory-96t.2) —
+        for now this just confirms your property and login are wired up.
+      </p>
+    </div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const propertyLabel = document.getElementById("propertyLabel");
+    const createCard = document.getElementById("createPropertyCard");
+    const chaptersCard = document.getElementById("chaptersCard");
+    const propertyForm = document.getElementById("propertyForm");
+    const createError = document.getElementById("createError");
+    const createBtn = document.getElementById("createBtn");
+    const chapterList = document.getElementById("chapterList");
+    const emptyState = document.getElementById("emptyState");
+
+    async function loadProperty(userId) {
+      const { data: properties, error } = await sb
+        .from("properties")
+        .select("id, nickname, address_line1, city, state")
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (error) {
+        propertyLabel.textContent = "Error loading property";
+        console.error(error);
+        return;
+      }
+
+      if (!properties || properties.length === 0) {
+        propertyLabel.textContent = "No home set up yet";
+        createCard.style.display = "block";
+        return;
+      }
+
+      const property = properties[0];
+      propertyLabel.textContent = property.nickname
+        ? `${property.nickname} — ${property.city}, ${property.state}`
+        : `${property.address_line1}, ${property.city}, ${property.state}`;
+
+      chaptersCard.style.display = "block";
+
+      const { data: chapters, error: chError } = await sb
+        .from("chapters")
+        .select("id, title, chapter_type, status")
+        .eq("property_id", property.id)
+        .order("created_at", { ascending: false });
+
+      if (chError) {
+        console.error(chError);
+        return;
+      }
+
+      if (!chapters || chapters.length === 0) {
+        emptyState.style.display = "block";
+        return;
+      }
+
+      chapterList.innerHTML = chapters
+        .map(c => `<li><strong>${c.title}</strong> — ${c.chapter_type} (${c.status})</li>`)
+        .join("");
+    }
+
+    propertyForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      createError.style.display = "none";
+      createBtn.disabled = true;
+      createBtn.textContent = "Creating…";
+
+      const { data: { user } } = await sb.auth.getUser();
+
+      const propertyData = {
+        nickname: document.getElementById("nickname").value.trim() || null,
+        address_line1: document.getElementById("address_line1").value.trim(),
+        address_line2: document.getElementById("address_line2").value.trim() || null,
+        city: document.getElementById("city").value.trim(),
+        state: document.getElementById("state").value.trim(),
+        postal_code: document.getElementById("postal_code").value.trim() || null,
+        created_by: user.id
+      };
+
+      const { error: insertError } = await sb
+        .from("properties")
+        .insert(propertyData)
+        .select()
+        .single();
+
+      if (insertError) {
+        createError.textContent = insertError.message;
+        createError.style.display = "block";
+        createBtn.disabled = false;
+        createBtn.textContent = "Create home";
+        return;
+      }
+
+      createCard.style.display = "none";
+      await loadProperty(user.id);
+    });
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        window.location.href = "login.html";
+        return;
+      }
+      await loadProperty(session.user.id);
+    });
+  </script>
+</body>
+</html>
