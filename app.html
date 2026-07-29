@@ -102,7 +102,7 @@
       }
 
       chapterList.innerHTML = chapters
-        .map(c => `<li><strong>${c.title}</strong> — ${c.chapter_type} (${c.status})</li>`)
+        .map(c => `<li><a href="chapter.html?id=${c.id}"><strong>${c.title}</strong> — ${c.chapter_type} (${c.status})</a></li>`)
         .join("");
     }
 

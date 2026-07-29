@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory — Chapter</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p><a href="app.html">&larr; Back</a></p>
+  </header>
+  <main>
+    <div id="chapterCard" class="card">
+      <p class="status">Loading…</p>
+    </div>
+
+    <div id="photosCard" class="card" style="margin-top:1rem; display:none;">
+      <p>Photos</p>
+      <div id="photoGrid"></div>
+    </div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const CHAPTER_TYPES = ["renovation", "landscaping", "paint", "appliance", "research", "general"];
+
+    const chapterCard = document.getElementById("chapterCard");
+    const photosCard = document.getElementById("photosCard");
+    const photoGrid = document.getElementById("photoGrid");
+
+    const params = new URLSearchParams(location.search);
+    const chapterId = params.get("id");
+
+    let propertyId = null;
+    let otherChapters = [];
+
+    function typeOptionsHtml(selected) {
+      return CHAPTER_TYPES.map(t => `<option value="${t}" ${t === selected ? "selected" : ""}>${t}</option>`).join("");
+    }
+
+    function statusOptionsHtml(selected) {
+      return ["active", "completed", "archived"]
+        .map(s => `<option value="${s}" ${s === selected ? "selected" : ""}>${s}</option>`)
+        .join("");
+    }
+
+    async function loadChapter() {
+      if (!chapterId) {
+        chapterCard.innerHTML = `<p class="error">No chapter id given.</p>`;
+        return;
+      }
+
+      const { data: chapter, error } = await sb
+        .from("chapters")
+        .select("id, property_id, title, chapter_type, description, status")
+        .eq("id", chapterId)
+        .single();
+
+      if (error || !chapter) {
+        chapterCard.innerHTML = `<p class="error">Chapter not found or not accessible.</p>`;
+        return;
+      }
+
+      propertyId = chapter.property_id;
+
+      chapterCard.innerHTML = `
+        <label>Title</label>
+        <input type="text" class="ch-title" value="${chapter.title.replace(/"/g, "&quot;")}">
+        <label>Category</label>
+        <select class="ch-type">${typeOptionsHtml(chapter.chapter_type)}</select>
+        <label>Description</label>
+        <textarea class="ch-description" rows="3">${chapter.description || ""}</textarea>
+        <label>Status</label>
+        <select class="ch-status">${statusOptionsHtml(chapter.status)}</select>
+        <button type="button" class="ch-save">Save changes</button>
+        <button type="button" class="ch-delete" style="background:#b3261e;">Delete chapter</button>
+        <p class="ch-error error" style="display:none;"></p>
+      `;
+
+      chapterCard.querySelector(".ch-save").addEventListener("click", async () => {
+        const saveBtn = chapterCard.querySelector(".ch-save");
+        const chError = chapterCard.querySelector(".ch-error");
+        chError.style.display = "none";
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+
+        const { error: updateError } = await sb
+          .from("chapters")
+          .update({
+            title: chapterCard.querySelector(".ch-title").value.trim(),
+            chapter_type: chapterCard.querySelector(".ch-type").value,
+            description: chapterCard.querySelector(".ch-description").value.trim() || null,
+            status: chapterCard.querySelector(".ch-status").value,
+          })
+          .eq("id", chapterId);
+
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save changes";
+
+        if (updateError) {
+          chError.textContent = updateError.message;
+          chError.style.display = "block";
+          return;
+        }
+
+        saveBtn.textContent = "Saved";
+        setTimeout(() => { saveBtn.textContent = "Save changes"; }, 1500);
+      });
+
+      chapterCard.querySelector(".ch-delete").addEventListener("click", async () => {
+        const ok = confirm(`Delete "${chapter.title}"? Its photos will NOT be deleted - they'll go back to "needs review" on the upload page, unfiled.`);
+        if (!ok) return;
+
+        const deleteBtn = chapterCard.querySelector(".ch-delete");
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = "Deleting…";
+
+        // Unfile photos back to pending_review BEFORE deleting the chapter -
+        // the FK is ON DELETE SET NULL, but that alone would leave them
+        // status='confirmed' with no chapter, invisible to the "needs
+        // review" query on the upload page.
+        await sb.from("media").update({ status: "pending_review" }).eq("chapter_id", chapterId);
+
+        const { error: deleteError } = await sb.from("chapters").delete().eq("id", chapterId);
+
+        if (deleteError) {
+          const chError = chapterCard.querySelector(".ch-error");
+          chError.textContent = deleteError.message;
+          chError.style.display = "block";
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = "Delete chapter";
+          return;
+        }
+
+        window.location.href = "app.html";
+      });
+
+      await loadOtherChapters();
+      await loadPhotos();
+    }
+
+    async function loadOtherChapters() {
+      const { data, error } = await sb
+        .from("chapters")
+        .select("id, title")
+        .eq("property_id", propertyId)
+        .neq("id", chapterId)
+        .order("created_at", { ascending: false });
+
+      if (!error) otherChapters = data || [];
+    }
+
+    async function loadPhotos() {
+      const { data: photos, error } = await sb
+        .from("media")
+        .select("id, storage_path, caption, ai_description")
+        .eq("chapter_id", chapterId)
+        .order("created_at", { ascending: true });
+
+      if (error || !photos || photos.length === 0) return;
+
+      photosCard.style.display = "block";
+      photoGrid.innerHTML = "";
+
+      for (const photo of photos) {
+        const { data: signed } = await sb.storage
+          .from("houstory-media")
+          .createSignedUrl(photo.storage_path, 3600);
+
+        const el = document.createElement("div");
+        el.className = "card";
+        el.style.marginTop = "1rem";
+        el.innerHTML = `
+          ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+          <label>Description</label>
+          <textarea class="ph-description" rows="2">${photo.ai_description || ""}</textarea>
+          <label>Move to</label>
+          <select class="ph-move">
+            <option value="">— keep here —</option>
+            ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
+          </select>
+          <button type="button" class="ph-save">Save</button>
+          <button type="button" class="ph-delete" style="background:#b3261e;">Delete photo</button>
+          <p class="ph-error error" style="display:none;"></p>
+        `;
+        photoGrid.appendChild(el);
+
+        el.querySelector(".ph-save").addEventListener("click", async () => {
+          const saveBtn = el.querySelector(".ph-save");
+          const phError = el.querySelector(".ph-error");
+          phError.style.display = "none";
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving…";
+
+          const newDescription = el.querySelector(".ph-description").value.trim();
+          const moveTo = el.querySelector(".ph-move").value;
+
+          const updates = { ai_description: newDescription };
+          if (moveTo) updates.chapter_id = moveTo;
+
+          const { error: updateError } = await sb.from("media").update(updates).eq("id", photo.id);
+
+          if (updateError) {
+            phError.textContent = updateError.message;
+            phError.style.display = "block";
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Save";
+            return;
+          }
+
+          if (moveTo) {
+            el.remove();
+          } else {
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Saved";
+            setTimeout(() => { saveBtn.textContent = "Save"; }, 1500);
+          }
+        });
+
+        el.querySelector(".ph-delete").addEventListener("click", async () => {
+          const ok = confirm("Delete this photo? This can't be undone.");
+          if (!ok) return;
+
+          const deleteBtn = el.querySelector(".ph-delete");
+          deleteBtn.disabled = true;
+          deleteBtn.textContent = "Deleting…";
+
+          await sb.storage.from("houstory-media").remove([photo.storage_path]);
+          const { error: deleteError } = await sb.from("media").delete().eq("id", photo.id);
+
+          if (deleteError) {
+            const phError = el.querySelector(".ph-error");
+            phError.textContent = deleteError.message;
+            phError.style.display = "block";
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = "Delete photo";
+            return;
+          }
+
+          el.remove();
+        });
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        window.location.href = "login.html";
+        return;
+      }
+      await loadChapter();
+    });
+  </script>
+</body>
+</html>
