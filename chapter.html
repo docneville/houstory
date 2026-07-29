@@ -160,7 +160,7 @@
     async function loadPhotos() {
       const { data: photos, error } = await sb
         .from("media")
-        .select("id, storage_path, caption, ai_description")
+        .select("id, storage_path, caption, title, ai_description")
         .eq("chapter_id", chapterId)
         .order("created_at", { ascending: true });
 
@@ -179,6 +179,8 @@
         el.style.marginTop = "1rem";
         el.innerHTML = `
           ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+          <label>Title</label>
+          <input type="text" class="ph-title" value="${(photo.title || "").replace(/"/g, "&quot;")}">
           <label>Description</label>
           <textarea class="ph-description" rows="2">${photo.ai_description || ""}</textarea>
           <label>Move to</label>
@@ -199,10 +201,11 @@
           saveBtn.disabled = true;
           saveBtn.textContent = "Saving…";
 
+          const newTitle = el.querySelector(".ph-title").value.trim();
           const newDescription = el.querySelector(".ph-description").value.trim();
           const moveTo = el.querySelector(".ph-move").value;
 
-          const updates = { ai_description: newDescription };
+          const updates = { title: newTitle || null, ai_description: newDescription };
           if (moveTo) updates.chapter_id = moveTo;
 
           const { error: updateError } = await sb.from("media").update(updates).eq("id", photo.id);

@@ -111,6 +111,8 @@
       card.innerHTML = `
         ${imgHtml}
         <p class="status">Review before saving</p>
+        <label>Photo title</label>
+        <input type="text" class="rv-photo-title" value="${(suggestion.title || "").replace(/"/g, "&quot;")}">
         <label>Photo description</label>
         <textarea class="rv-description" rows="2">${suggestion.description}</textarea>
         ${fieldsHtml}
@@ -144,6 +146,7 @@
         saveBtn.disabled = true;
         saveBtn.textContent = "Saving…";
 
+        const photoTitle = card.querySelector(".rv-photo-title").value.trim();
         const description = card.querySelector(".rv-description").value.trim();
         const target = targetSelect.value;
         const fields = {};
@@ -191,7 +194,7 @@
 
         const { error: mediaError } = await sb
           .from("media")
-          .update({ chapter_id: chapterId, status: "confirmed", ai_description: description })
+          .update({ chapter_id: chapterId, status: "confirmed", title: photoTitle || null, ai_description: description })
           .eq("id", mediaId);
 
         if (mediaError) {

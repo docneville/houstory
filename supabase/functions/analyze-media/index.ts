@@ -50,6 +50,11 @@ const CATEGORIZE_TOOL = {
         enum: ["renovation", "landscaping", "paint", "appliance", "research", "general"],
         description: "Best-fit category for this photo.",
       },
+      title: {
+        type: "string",
+        description:
+          "A SHORT label (a few words) for THIS SPECIFIC photo, useful for scanning a grid of many photos at a glance - e.g. 'Front of refrigerator', 'Model/serial sticker', 'Kitchen before demo'. If this photo is one of several views of the same single item (e.g. an appliance's main shot plus its serial sticker), make the title specific enough to distinguish it from those other views.",
+      },
       description: {
         type: "string",
         description: "1-3 sentence natural-language description of what's in THIS SPECIFIC photo.",
@@ -65,7 +70,7 @@ const CATEGORIZE_TOOL = {
           "Type-specific structured fields when identifiable. paint: brand, color_name, color_code, hex, sheen, room. appliance: brand, model_number, serial_number. Omit fields you can't confidently read from the photo.",
       },
     },
-    required: ["chapter_type", "description", "suggested_chapter_name"],
+    required: ["chapter_type", "title", "description", "suggested_chapter_name"],
   },
 };
 
@@ -137,8 +142,10 @@ serve(async (req: Request): Promise<Response> => {
               text:
                 "This photo is for Houstory, an app for tracking a home's renovations, landscaping, paint colors, appliances, and history. " +
                 userNote +
-                " Categorize this photo. Remember: 'description' is about this one photo only. " +
-                "'suggested_chapter_name' should be a broader project/theme name a human would want to keep filing similar photos under over time, not a description of this single photo.",
+                " Categorize this photo. Remember these are three different things: " +
+                "'title' is a short label for THIS photo (for scanning a grid of many photos). " +
+                "'description' is a longer description, also about this one photo only. " +
+                "'suggested_chapter_name' is a broader project/theme name a human would want to keep filing similar photos under over time, not about this single photo at all.",
             },
           ],
         },
@@ -160,6 +167,7 @@ serve(async (req: Request): Promise<Response> => {
   const { error: updateErr } = await sb
     .from("media")
     .update({
+      title: suggestion.title,
       ai_description: suggestion.description,
       ai_extracted: { suggested: suggestion },
     })
