@@ -59,7 +59,7 @@
 
       const { data: chapter, error } = await sb
         .from("chapters")
-        .select("id, property_id, title, chapter_type, description, status")
+        .select("id, property_id, title, chapter_type, description, status, metadata")
         .eq("id", chapterId)
         .single();
 
@@ -69,6 +69,10 @@
       }
 
       propertyId = chapter.property_id;
+
+      // Load other chapters before rendering so the merge dropdown can be
+      // built into the initial HTML rather than added in a second pass.
+      await loadOtherChapters();
 
       chapterCard.innerHTML = `
         <label>Title</label>
@@ -82,6 +86,14 @@
         <button type="button" class="ch-save">Save changes</button>
         <button type="button" class="ch-delete" style="background:#b3261e;">Delete chapter</button>
         <p class="ch-error error" style="display:none;"></p>
+        <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hs-border);">
+          <label>Merge into another chapter</label>
+          <select class="ch-merge-target">
+            <option value="">— choose a chapter —</option>
+            ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
+          </select>
+          <button type="button" class="ch-merge-btn" ${otherChapters.length === 0 ? "disabled" : ""}>Merge into selected chapter</button>
+        </div>
       `;
 
       chapterCard.querySelector(".ch-save").addEventListener("click", async () => {
@@ -142,7 +154,75 @@
         window.location.href = "app.html";
       });
 
-      await loadOtherChapters();
+      chapterCard.querySelector(".ch-merge-btn").addEventListener("click", async () => {
+        const mergeSelect = chapterCard.querySelector(".ch-merge-target");
+        const targetId = mergeSelect.value;
+        if (!targetId) {
+          alert("Choose a chapter to merge into first.");
+          return;
+        }
+        const targetTitle = mergeSelect.selectedOptions[0].textContent;
+
+        const ok = confirm(`Merge "${chapter.title}" into "${targetTitle}"? All its photos will move there, and "${chapter.title}" will be deleted.`);
+        if (!ok) return;
+
+        const mergeBtn = chapterCard.querySelector(".ch-merge-btn");
+        const chError = chapterCard.querySelector(".ch-error");
+        chError.style.display = "none";
+        mergeBtn.disabled = true;
+        mergeBtn.textContent = "Merging…";
+
+        const { error: moveError } = await sb
+          .from("media")
+          .update({ chapter_id: targetId })
+          .eq("chapter_id", chapterId);
+
+        if (moveError) {
+          chError.textContent = moveError.message;
+          chError.style.display = "block";
+          mergeBtn.disabled = false;
+          mergeBtn.textContent = "Merge into selected chapter";
+          return;
+        }
+
+        // Fold this chapter's metadata/description into the target's,
+        // preferring the target's own values where both have something -
+        // it's the chapter that survives.
+        const { data: targetChapter, error: targetErr } = await sb
+          .from("chapters")
+          .select("metadata, description")
+          .eq("id", targetId)
+          .single();
+
+        if (targetErr) {
+          chError.textContent = targetErr.message;
+          chError.style.display = "block";
+          mergeBtn.disabled = false;
+          mergeBtn.textContent = "Merge into selected chapter";
+          return;
+        }
+
+        const mergedMetadata = { ...(chapter.metadata || {}), ...(targetChapter.metadata || {}) };
+        const mergedDescription = targetChapter.description || chapter.description || null;
+
+        await sb
+          .from("chapters")
+          .update({ metadata: mergedMetadata, description: mergedDescription })
+          .eq("id", targetId);
+
+        const { error: deleteError } = await sb.from("chapters").delete().eq("id", chapterId);
+
+        if (deleteError) {
+          chError.textContent = deleteError.message;
+          chError.style.display = "block";
+          mergeBtn.disabled = false;
+          mergeBtn.textContent = "Merge into selected chapter";
+          return;
+        }
+
+        window.location.href = `chapter.html?id=${targetId}`;
+      });
+
       await loadPhotos();
     }
 
