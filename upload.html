@@ -18,12 +18,24 @@
         <label for="files">Photos</label>
         <input type="file" id="files" accept="image/*" multiple required>
         <div id="groupBuilder" style="display:none; margin-top:0.75rem;">
-          <p style="color: var(--hs-muted); margin: 0 0 0.25rem;">
-            Multiple photos of the same item (e.g. an appliance + its serial sticker)? Check them and group them so Claude looks at them together.
+          <div id="groupingPrompt" class="card" style="padding:0.75rem; border-color:var(--hs-accent);">
+            <p style="margin:0 0 0.5rem; font-weight:bold;">
+              Are any of these photos the same item, viewed differently (e.g. an appliance + its serial sticker)?
+            </p>
+            <button type="button" id="groupingNoBtn">No, these are separate photos</button>
+            <button type="button" id="groupingYesBtn" style="background:var(--hs-muted);">Yes, let me group some</button>
+          </div>
+          <p id="groupingAnsweredNote" style="display:none; color: var(--hs-muted); margin: 0.5rem 0;">
+            Uploading as separate photos. <a href="#" id="groupingChangeLink">Change</a>
           </p>
-          <div id="fileCheckboxList"></div>
-          <button type="button" id="groupSelectedBtn">Group selected as one item</button>
-          <div id="groupList"></div>
+          <div id="groupCheckboxArea" style="display:none;">
+            <p style="color: var(--hs-muted); margin: 0.5rem 0 0.25rem;">
+              Check the photos that are views of the same item, then group them. Repeat for more than one group.
+            </p>
+            <div id="fileCheckboxList"></div>
+            <button type="button" id="groupSelectedBtn">Group selected as one item</button>
+            <div id="groupList"></div>
+          </div>
         </div>
         <label for="note">Note (optional, applied to all photos in this batch)</label>
         <textarea id="note" rows="2" placeholder="e.g. used in kids' bedroom, kitchen reno day 1"></textarea>
@@ -49,6 +61,12 @@
     const needsReviewEl = document.getElementById("needsReview");
     const filesInput = document.getElementById("files");
     const groupBuilder = document.getElementById("groupBuilder");
+    const groupingPrompt = document.getElementById("groupingPrompt");
+    const groupingNoBtn = document.getElementById("groupingNoBtn");
+    const groupingYesBtn = document.getElementById("groupingYesBtn");
+    const groupingAnsweredNote = document.getElementById("groupingAnsweredNote");
+    const groupingChangeLink = document.getElementById("groupingChangeLink");
+    const groupCheckboxArea = document.getElementById("groupCheckboxArea");
     const fileCheckboxList = document.getElementById("fileCheckboxList");
     const groupSelectedBtn = document.getElementById("groupSelectedBtn");
     const groupListEl = document.getElementById("groupList");
@@ -69,19 +87,53 @@
     // the last "Photos" input change; groups is an array of arrays of
     // indices into selectedFiles. Any index not in a group is uploaded/
     // analyzed individually, same as before this feature existed.
+    //
+    // houstory-96t.20: a real test showed this was too easy to skip - two
+    // photos of one range landed in two different chapters because nothing
+    // forced a decision about grouping before uploading. Fix: for 2+ files,
+    // Upload is disabled until the user explicitly answers "are any of
+    // these the same item?" (Yes reveals the checkbox/group UI, No just
+    // proceeds) - for a single file there's nothing to group, so no gate.
     let selectedFiles = [];
     let groups = [];
+    let groupingDecisionMade = false;
+    let wantsToGroup = false;
 
     function groupedIndexSet() {
       return new Set(groups.flat());
     }
 
+    function updateUploadButtonState() {
+      uploadBtn.disabled = selectedFiles.length >= 2 && !groupingDecisionMade;
+    }
+
     function renderGroupBuilder() {
-      if (selectedFiles.length === 0) {
+      if (selectedFiles.length < 2) {
         groupBuilder.style.display = "none";
+        updateUploadButtonState();
         return;
       }
       groupBuilder.style.display = "block";
+
+      if (!groupingDecisionMade) {
+        groupingPrompt.style.display = "block";
+        groupingAnsweredNote.style.display = "none";
+        groupCheckboxArea.style.display = "none";
+        updateUploadButtonState();
+        return;
+      }
+
+      groupingPrompt.style.display = "none";
+
+      if (!wantsToGroup) {
+        groupingAnsweredNote.style.display = "block";
+        groupCheckboxArea.style.display = "none";
+        updateUploadButtonState();
+        return;
+      }
+
+      groupingAnsweredNote.style.display = "none";
+      groupCheckboxArea.style.display = "block";
 
       const grouped = groupedIndexSet();
       fileCheckboxList.innerHTML = selectedFiles
@@ -107,11 +159,34 @@
           renderGroupBuilder();
         });
       });
+
+      updateUploadButtonState();
     }
 
     filesInput.addEventListener("change", () => {
       selectedFiles = Array.from(filesInput.files);
       groups = [];
+      groupingDecisionMade = false;
+      wantsToGroup = false;
+      renderGroupBuilder();
+    });
+
+    groupingNoBtn.addEventListener("click", () => {
+      groupingDecisionMade = true;
+      wantsToGroup = false;
+      renderGroupBuilder();
+    });
+
+    groupingYesBtn.addEventListener("click", () => {
+      groupingDecisionMade = true;
+      wantsToGroup = true;
+      renderGroupBuilder();
+    });
+
+    groupingChangeLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      groupingDecisionMade = false;
+      wantsToGroup = false;
       renderGroupBuilder();
     });
 
