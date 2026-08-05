@@ -69,11 +69,41 @@
       return session;
     }
 
+    // Phone camera photos can be several MB each. Sending two or three of
+    // those to analyze-media (which downloads, base64-encodes, and submits
+    // all of them to Claude in one call) can exceed the edge function's
+    // resource limit - Supabase's edge-runtime kills the worker and returns
+    // HTTP 546, not a normal error from our own code. Resizing here caps
+    // that at the source, and doesn't lose anything Claude would actually
+    // use anyway: 1568px on the long edge is roughly Claude's own effective
+    // vision resolution, so a full-resolution original doesn't buy any
+    // extra analysis quality, just a bigger, slower upload.
+    async function resizeImageForUpload(file, maxDimension = 1568, quality = 0.85) {
+      if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+
+      const imgBitmap = await createImageBitmap(file);
+      const scale = Math.min(1, maxDimension / Math.max(imgBitmap.width, imgBitmap.height));
+      if (scale === 1) return file; // already small enough
+
+      const targetW = Math.round(imgBitmap.width * scale);
+      const targetH = Math.round(imgBitmap.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      canvas.getContext("2d").drawImage(imgBitmap, 0, 0, targetW, targetH);
+
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (!blob) return file; // canvas encoding failed - fall back to the original rather than blocking upload
+
+      return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+    }
+
     async function uploadOneFile(file, caption, userId) {
-      const storagePath = `${propertyId}/${crypto.randomUUID()}-${file.name}`;
+      const resized = await resizeImageForUpload(file);
+      const storagePath = `${propertyId}/${crypto.randomUUID()}-${resized.name}`;
       const { error: uploadError } = await sb.storage
         .from("houstory-media")
-        .upload(storagePath, file, { contentType: file.type });
+        .upload(storagePath, resized, { contentType: resized.type });
       if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
       const { data: mediaRow, error: insertError } = await sb
