@@ -78,6 +78,23 @@
 
     let currentPropertyId = null;
 
+    // Use getSession() rather than getUser() to get the current user -
+    // getSession() auto-refreshes an expired access token (as long as the
+    // refresh token is still valid), while getUser() just validates
+    // whatever token is currently in memory and fails if it's gone stale.
+    // On mobile, Safari suspends timers while the page is backgrounded, so
+    // a scheduled auto-refresh can miss its window - without this, coming
+    // back to the page after a while and submitting a form crashed with
+    // "null is not an object (evaluating 'user.id')".
+    async function requireSession() {
+      const { data: { session }, error } = await sb.auth.getSession();
+      if (error || !session) {
+        window.location.href = "login.html";
+        throw new Error("Session expired - redirecting to sign in.");
+      }
+      return session;
+    }
+
     async function loadProperty(userId) {
       const { data: properties, error } = await sb
         .from("properties")
@@ -132,7 +149,12 @@
       createBtn.disabled = true;
       createBtn.textContent = "Creating…";
 
-      const { data: { user } } = await sb.auth.getUser();
+      let user;
+      try {
+        user = (await requireSession()).user;
+      } catch {
+        return; // requireSession() already redirected to login.html
+      }
 
       const propertyData = {
         nickname: document.getElementById("nickname").value.trim() || null,
@@ -168,7 +190,12 @@
       newChapterBtn.disabled = true;
       newChapterBtn.textContent = "Creating…";
 
-      const { data: { user } } = await sb.auth.getUser();
+      let user;
+      try {
+        user = (await requireSession()).user;
+      } catch {
+        return; // requireSession() already redirected to login.html
+      }
       const title = document.getElementById("newChapterTitle").value.trim();
       const chapterType = document.getElementById("newChapterType").value;
 

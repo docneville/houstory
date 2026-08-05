@@ -51,6 +51,24 @@
       errorBox.style.display = "block";
     }
 
+    // Use getSession() rather than getUser() to get the current user - v2
+    // of supabase-js auto-refreshes an expired access token inside
+    // getSession() as long as the refresh token is still valid, while
+    // getUser() just validates whatever token is currently in memory and
+    // fails outright if it's gone stale. On mobile, Safari suspends timers
+    // while the page is backgrounded, so a scheduled auto-refresh can miss
+    // its window - without this, resuming the page and submitting a photo
+    // crashed with "null is not an object (evaluating 'user.id')" once the
+    // token had quietly expired.
+    async function requireSession() {
+      const { data: { session }, error } = await sb.auth.getSession();
+      if (error || !session) {
+        window.location.href = "login.html";
+        throw new Error("Session expired - redirecting to sign in.");
+      }
+      return session;
+    }
+
     async function uploadOneFile(file, caption, userId) {
       const storagePath = `${propertyId}/${crypto.randomUUID()}-${file.name}`;
       const { error: uploadError } = await sb.storage
@@ -73,7 +91,7 @@
     // endpoint specifically once it took a few seconds (image download +
     // Claude call), while a plain fetch with the same headers worked fine.
     async function callAnalyze(body) {
-      const { data: { session } } = await sb.auth.getSession();
+      const session = await requireSession();
       const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-media`, {
         method: "POST",
         headers: {
@@ -94,7 +112,13 @@
       uploadBtn.disabled = true;
       uploadBtn.textContent = "Working…";
 
-      const { data: { user } } = await sb.auth.getUser();
+      let user;
+      try {
+        user = (await requireSession()).user;
+      } catch {
+        return; // requireSession() already redirected to login.html
+      }
+
       const instructions = document.getElementById("instructions").value.trim();
       const files = Array.from(document.getElementById("files").files);
 
