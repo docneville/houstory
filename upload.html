@@ -104,7 +104,7 @@
       return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
     }
 
-    async function uploadOneFile(file, caption, userId) {
+    async function uploadOneFile(file, caption, userId, batchId) {
       const resized = await resizeImageForUpload(file);
       const storagePath = `${propertyId}/${crypto.randomUUID()}-${resized.name}`;
       const { error: uploadError } = await sb.storage
@@ -114,7 +114,7 @@
 
       const { data: mediaRow, error: insertError } = await sb
         .from("media")
-        .insert({ property_id: propertyId, kind: "photo", storage_path: storagePath, caption, uploaded_by: userId })
+        .insert({ property_id: propertyId, kind: "photo", storage_path: storagePath, caption, uploaded_by: userId, upload_batch_id: batchId })
         .select()
         .single();
       if (insertError) throw new Error(`Save failed: ${insertError.message}`);
@@ -157,6 +157,7 @@
 
       const instructions = document.getElementById("instructions").value.trim();
       const files = Array.from(document.getElementById("files").files);
+      const batchId = crypto.randomUUID();
 
       const card = document.createElement("div");
       card.className = "card";
@@ -167,7 +168,7 @@
       let mediaRows;
       try {
         mediaRows = [];
-        for (const file of files) mediaRows.push(await uploadOneFile(file, instructions || null, user.id));
+        for (const file of files) mediaRows.push(await uploadOneFile(file, instructions || null, user.id, batchId));
       } catch (uploadErr) {
         card.innerHTML = `<p class="status">${uploadErr.message}</p>`;
         uploadBtn.disabled = false;
@@ -202,38 +203,87 @@
       loadUnfiled();
     });
 
-    // Simple read-only gallery of photos that have been analyzed but not
-    // yet filed into a chapter - filing happens on chapter.html now
-    // (its "add existing photos" picker), not here.
+    // Gallery of photos that have been analyzed but not yet filed into a
+    // chapter - filing happens on chapter.html now (its "add existing
+    // photos" picker), not here. Photos submitted together share an
+    // upload_batch_id, so they're grouped into one card with one shared
+    // description instead of repeating it per photo. Rows without a batch
+    // id (e.g. from before this existed) just become their own group of 1.
     async function loadUnfiled() {
       needsReviewEl.innerHTML = "";
 
       const { data: unfiled, error } = await sb
         .from("media")
-        .select("id, storage_path, caption, ai_description")
+        .select("id, storage_path, caption, ai_description, upload_batch_id")
         .eq("property_id", propertyId)
         .is("chapter_id", null)
         .order("created_at", { ascending: false });
 
       if (error || !unfiled || unfiled.length === 0) return;
 
+      const groups = [];
+      const batchIndex = new Map();
+      for (const row of unfiled) {
+        if (row.upload_batch_id && batchIndex.has(row.upload_batch_id)) {
+          groups[batchIndex.get(row.upload_batch_id)].push(row);
+        } else {
+          if (row.upload_batch_id) batchIndex.set(row.upload_batch_id, groups.length);
+          groups.push([row]);
+        }
+      }
+
       const heading = document.createElement("h2");
       heading.textContent = `Unfiled (${unfiled.length})`;
       heading.style.fontSize = "1rem";
       needsReviewEl.appendChild(heading);
 
-      for (const row of unfiled) {
-        const { data: signed } = await sb.storage.from("houstory-media").createSignedUrl(row.storage_path, 3600);
+      for (const group of groups) {
+        const signedUrls = await Promise.all(
+          group.map(row => sb.storage.from("houstory-media").createSignedUrl(row.storage_path, 3600))
+        );
 
         const card = document.createElement("div");
         card.className = "card";
         card.style.marginTop = "1rem";
+
+        const thumbsHtml = signedUrls
+          .map(({ data }) => data
+            ? `<img src="${data.signedUrl}" alt="" style="max-width:${group.length > 1 ? "47%" : "100%"}; display:inline-block; margin:0 2% 0.5rem 0; border-radius:8px;">`
+            : "")
+          .join("");
+
         card.innerHTML = `
-          ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+          ${thumbsHtml}
           <p class="unfiled-response" style="white-space:pre-wrap;"></p>
+          <button type="button" class="unfiled-delete" style="background:#b3261e;">Delete</button>
+          <p class="unfiled-error error" style="display:none;"></p>
         `;
-        card.querySelector(".unfiled-response").textContent = row.ai_description || "Not analyzed yet.";
+        card.querySelector(".unfiled-response").textContent = group[0].ai_description || "Not analyzed yet.";
         needsReviewEl.appendChild(card);
+
+        card.querySelector(".unfiled-delete").addEventListener("click", async () => {
+          const count = group.length;
+          const ok = confirm(`Delete ${count} photo${count > 1 ? "s" : ""}? This can't be undone.`);
+          if (!ok) return;
+
+          const deleteBtn = card.querySelector(".unfiled-delete");
+          deleteBtn.disabled = true;
+          deleteBtn.textContent = "Deleting…";
+
+          await sb.storage.from("houstory-media").remove(group.map(row => row.storage_path));
+          const { error: deleteError } = await sb.from("media").delete().in("id", group.map(row => row.id));
+
+          if (deleteError) {
+            const errEl = card.querySelector(".unfiled-error");
+            errEl.textContent = deleteError.message;
+            errEl.style.display = "block";
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = "Delete";
+            return;
+          }
+
+          card.remove();
+        });
       }
     }
 
