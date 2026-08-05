@@ -77,9 +77,17 @@ landscaping, paint colors, appliances, and the historical photos behind them.
 - **Backend**: Supabase (Postgres + Storage + Edge Functions). Schema lives
   in `supabase/migrations/*.sql`, applied in order. Server logic lives in
   `supabase/functions/<name>/`.
-- **AI**: Claude is used to describe and categorize uploaded photos
-  (renovation vs. landscaping vs. appliance, etc.) — planned as an Edge
-  Function that calls the Claude API on upload.
+- **AI**: `upload.html` ("Analyze") is a freeform playground — pick 1+
+  photos, write instructions, submit to `analyze-media` (Edge Function),
+  see Claude's raw text response. No forced categorization/schema — that
+  was tried and deliberately backed out (houstory-96t.23) because it got
+  in the way of just tuning what Claude is asked to look for. Analyzed
+  photos save unfiled (`chapter_id` null); filing them into a chapter is a
+  separate, later, deliberate step.
+- **Organizing**: chapters are created manually via a form on `app.html`,
+  never auto-suggested. `chapter.html` is where you edit a chapter, merge
+  two chapters together, and file unfiled photos into it (its "add
+  existing unfiled photos" picker, multi-select).
 - **Hosting**: GitHub Pages, custom domain via the root `CNAME` file.
 
 ## Conventions & Patterns

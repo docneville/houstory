@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Houstory — Upload</title>
+  <title>Houstory — Analyze</title>
   <link rel="stylesheet" href="houstory.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -15,37 +15,21 @@
   <main>
     <div class="card">
       <form id="uploadForm">
-        <label for="files">Photos</label>
+        <label for="files">Photo(s)</label>
         <input type="file" id="files" accept="image/*" multiple required>
-        <div id="groupBuilder" style="display:none; margin-top:0.75rem;">
-          <div id="groupingPrompt" class="card" style="padding:0.75rem; border-color:var(--hs-accent);">
-            <p style="margin:0 0 0.5rem; font-weight:bold;">
-              Are any of these photos the same item, viewed differently (e.g. an appliance + its serial sticker)?
-            </p>
-            <button type="button" id="groupingNoBtn">No, these are separate photos</button>
-            <button type="button" id="groupingYesBtn" style="background:var(--hs-muted);">Yes, let me group some</button>
-          </div>
-          <p id="groupingAnsweredNote" style="display:none; color: var(--hs-muted); margin: 0.5rem 0;">
-            Uploading as separate photos. <a href="#" id="groupingChangeLink">Change</a>
-          </p>
-          <div id="groupCheckboxArea" style="display:none;">
-            <p style="color: var(--hs-muted); margin: 0.5rem 0 0.25rem;">
-              Check the photos that are views of the same item, then group them. Repeat for more than one group.
-            </p>
-            <div id="fileCheckboxList"></div>
-            <button type="button" id="groupSelectedBtn">Group selected as one item</button>
-            <div id="groupList"></div>
-          </div>
-        </div>
-        <label for="note">Note (optional, applied to all photos in this batch)</label>
-        <textarea id="note" rows="2" placeholder="e.g. used in kids' bedroom, kitchen reno day 1"></textarea>
-        <button type="submit" id="uploadBtn">Upload &amp; analyze</button>
+        <p style="color: var(--hs-muted); margin: 0.25rem 0 0; font-size: 0.9rem;">
+          Selecting more than one sends them to Claude together, as one submission.
+        </p>
+        <label for="instructions">Instructions for Claude</label>
+        <textarea id="instructions" rows="3" placeholder="e.g. Look for the model and serial number on this appliance's label, and tell me the brand. Leave blank for a general description."></textarea>
+        <button type="submit" id="uploadBtn">Submit to Claude</button>
       </form>
       <p id="errorBox" class="error" style="display:none;"></p>
     </div>
 
-    <div id="needsReview"></div>
     <div id="results"></div>
+
+    <div id="needsReview"></div>
   </main>
 
   <script>
@@ -59,503 +43,15 @@
     const uploadBtn = document.getElementById("uploadBtn");
     const resultsEl = document.getElementById("results");
     const needsReviewEl = document.getElementById("needsReview");
-    const filesInput = document.getElementById("files");
-    const groupBuilder = document.getElementById("groupBuilder");
-    const groupingPrompt = document.getElementById("groupingPrompt");
-    const groupingNoBtn = document.getElementById("groupingNoBtn");
-    const groupingYesBtn = document.getElementById("groupingYesBtn");
-    const groupingAnsweredNote = document.getElementById("groupingAnsweredNote");
-    const groupingChangeLink = document.getElementById("groupingChangeLink");
-    const groupCheckboxArea = document.getElementById("groupCheckboxArea");
-    const fileCheckboxList = document.getElementById("fileCheckboxList");
-    const groupSelectedBtn = document.getElementById("groupSelectedBtn");
-    const groupListEl = document.getElementById("groupList");
-
-    const CHAPTER_TYPES = ["renovation", "landscaping", "paint", "appliance", "research", "general"];
 
     let propertyId = null;
-    let currentUserId = null;
-    // Chapters available as "attach to existing" targets. Refreshed after
-    // loading and after every new chapter this page creates, so a batch of
-    // photos can all land in the same freshly-created chapter.
-    let openChapters = [];
-
-    // Grouping (houstory-96t.15): let the user mark 2+ selected files as
-    // views of the same item (e.g. an appliance + its serial sticker) so
-    // they get analyzed together in one Claude call instead of N
-    // independent, disconnected ones. selectedFiles is the file list as of
-    // the last "Photos" input change; groups is an array of arrays of
-    // indices into selectedFiles. Any index not in a group is uploaded/
-    // analyzed individually, same as before this feature existed.
-    //
-    // houstory-96t.20: a real test showed this was too easy to skip - two
-    // photos of one range landed in two different chapters because nothing
-    // forced a decision about grouping before uploading. Fix: for 2+ files,
-    // Upload is disabled until the user explicitly answers "are any of
-    // these the same item?" (Yes reveals the checkbox/group UI, No just
-    // proceeds) - for a single file there's nothing to group, so no gate.
-    let selectedFiles = [];
-    let groups = [];
-    let groupingDecisionMade = false;
-    let wantsToGroup = false;
-
-    function groupedIndexSet() {
-      return new Set(groups.flat());
-    }
-
-    function updateUploadButtonState() {
-      uploadBtn.disabled = selectedFiles.length >= 2 && !groupingDecisionMade;
-    }
-
-    function renderGroupBuilder() {
-      if (selectedFiles.length < 2) {
-        groupBuilder.style.display = "none";
-        updateUploadButtonState();
-        return;
-      }
-      groupBuilder.style.display = "block";
-
-      if (!groupingDecisionMade) {
-        groupingPrompt.style.display = "block";
-        groupingAnsweredNote.style.display = "none";
-        groupCheckboxArea.style.display = "none";
-        updateUploadButtonState();
-        return;
-      }
-
-      groupingPrompt.style.display = "none";
-
-      if (!wantsToGroup) {
-        groupingAnsweredNote.style.display = "block";
-        groupCheckboxArea.style.display = "none";
-        updateUploadButtonState();
-        return;
-      }
-
-      groupingAnsweredNote.style.display = "none";
-      groupCheckboxArea.style.display = "block";
-
-      const grouped = groupedIndexSet();
-      fileCheckboxList.innerHTML = selectedFiles
-        .map((f, i) => grouped.has(i) ? "" : `
-          <label style="display:block; font-weight: normal; margin: 0.25rem 0;">
-            <input type="checkbox" class="group-checkbox" value="${i}" style="width:auto; display:inline;"> ${f.name}
-          </label>
-        `)
-        .join("");
-
-      groupListEl.innerHTML = groups
-        .map((indices, gi) => `
-          <p style="margin: 0.5rem 0;">
-            <strong>Group ${gi + 1}:</strong> ${indices.map(i => selectedFiles[i].name).join(", ")}
-            <button type="button" class="ungroup-btn" data-group-index="${gi}">Ungroup</button>
-          </p>
-        `)
-        .join("");
-
-      groupListEl.querySelectorAll(".ungroup-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          groups.splice(Number(btn.dataset.groupIndex), 1);
-          renderGroupBuilder();
-        });
-      });
-
-      updateUploadButtonState();
-    }
-
-    filesInput.addEventListener("change", () => {
-      selectedFiles = Array.from(filesInput.files);
-      groups = [];
-      groupingDecisionMade = false;
-      wantsToGroup = false;
-      renderGroupBuilder();
-    });
-
-    groupingNoBtn.addEventListener("click", () => {
-      groupingDecisionMade = true;
-      wantsToGroup = false;
-      renderGroupBuilder();
-    });
-
-    groupingYesBtn.addEventListener("click", () => {
-      groupingDecisionMade = true;
-      wantsToGroup = true;
-      renderGroupBuilder();
-    });
-
-    groupingChangeLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      groupingDecisionMade = false;
-      wantsToGroup = false;
-      renderGroupBuilder();
-    });
-
-    groupSelectedBtn.addEventListener("click", () => {
-      const checked = Array.from(fileCheckboxList.querySelectorAll(".group-checkbox:checked")).map(cb => Number(cb.value));
-      if (checked.length < 2) {
-        alert("Select at least 2 photos to group them as one item.");
-        return;
-      }
-      groups.push(checked);
-      renderGroupBuilder();
-    });
 
     function showError(msg) {
       errorBox.textContent = msg;
       errorBox.style.display = "block";
     }
 
-    function addResultCard(fileName) {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.style.marginTop = "1rem";
-      card.innerHTML = `<strong>${fileName}</strong><p class="status">Uploading…</p>`;
-      resultsEl.appendChild(card);
-      return card;
-    }
-
-    function setStatus(card, text) {
-      const status = card.querySelector(".status");
-      if (status) status.textContent = text;
-      else card.innerHTML = `<p class="status">${text}</p>`;
-    }
-
-    async function refreshOpenChapters() {
-      const { data, error } = await sb
-        .from("chapters")
-        .select("id, title, chapter_type")
-        .eq("property_id", propertyId)
-        .eq("status", "active")
-        .order("created_at", { ascending: false });
-
-      if (!error) openChapters = data || [];
-    }
-
-    function chapterOptionsHtml(selectedId) {
-      return openChapters
-        .map(c => `<option value="${c.id}" ${c.id === selectedId ? "selected" : ""}>${c.title} (${c.chapter_type})</option>`)
-        .join("");
-    }
-
-    function renderReviewForm(card, mediaId, suggestion, imageUrl) {
-      const fieldEntries = Object.entries(suggestion.fields || {});
-      const fieldsHtml = fieldEntries
-        .map(([k, v]) => `
-          <label for="f_${k}_${mediaId}">${k}</label>
-          <input type="text" id="f_${k}_${mediaId}" data-field-key="${k}" value="${String(v).replace(/"/g, "&quot;")}">
-        `)
-        .join("");
-
-      const typeOptionsHtml = CHAPTER_TYPES
-        .map(t => `<option value="${t}" ${t === suggestion.chapter_type ? "selected" : ""}>${t}</option>`)
-        .join("");
-
-      const imgHtml = imageUrl
-        ? `<img src="${imageUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`
-        : "";
-
-      // suggestion.description is about THIS PHOTO only. suggested_chapter_name
-      // is a separate, broader guess at what ongoing chapter/theme this photo
-      // might belong to - it's only used as a starting point for the "New
-      // chapter name" field below, never conflated with the photo's own
-      // description. See houstory chat 2026-07-28 for why these were split.
-      card.innerHTML = `
-        ${imgHtml}
-        <p class="status">Review before saving</p>
-        <label>Photo title</label>
-        <input type="text" class="rv-photo-title" value="${(suggestion.title || "").replace(/"/g, "&quot;")}">
-        <label>Photo description</label>
-        <textarea class="rv-description" rows="2">${suggestion.description}</textarea>
-        ${fieldsHtml}
-        <label>Save to</label>
-        <select class="rv-target">
-          <option value="__new__">Create new chapter</option>
-          ${openChapters.length ? `<optgroup label="Attach to existing">${chapterOptionsHtml()}</optgroup>` : ""}
-        </select>
-        <div class="rv-new-chapter-fields">
-          <label>New chapter name</label>
-          <input type="text" class="rv-chapter-name" value="${(suggestion.suggested_chapter_name || "").replace(/"/g, "&quot;")}" placeholder="e.g. Kitchen Renovation, New Pool">
-          <label>Category</label>
-          <select class="rv-type">${typeOptionsHtml}</select>
-        </div>
-        <button type="button" class="rv-save">Save</button>
-        <p class="rv-error error" style="display:none;"></p>
-      `;
-
-      const targetSelect = card.querySelector(".rv-target");
-      const newChapterFields = card.querySelector(".rv-new-chapter-fields");
-      const syncNewChapterFieldsVisibility = () => {
-        newChapterFields.style.display = targetSelect.value === "__new__" ? "block" : "none";
-      };
-      targetSelect.addEventListener("change", syncNewChapterFieldsVisibility);
-      syncNewChapterFieldsVisibility();
-
-      card.querySelector(".rv-save").addEventListener("click", async () => {
-        const saveBtn = card.querySelector(".rv-save");
-        const rvError = card.querySelector(".rv-error");
-        rvError.style.display = "none";
-        saveBtn.disabled = true;
-        saveBtn.textContent = "Saving…";
-
-        const photoTitle = card.querySelector(".rv-photo-title").value.trim();
-        const description = card.querySelector(".rv-description").value.trim();
-        const target = targetSelect.value;
-        const fields = {};
-        card.querySelectorAll("[data-field-key]").forEach(input => {
-          if (input.value.trim() !== "") fields[input.dataset.fieldKey] = input.value.trim();
-        });
-
-        let chapterId = target;
-
-        if (target === "__new__") {
-          const chapterName = card.querySelector(".rv-chapter-name").value.trim();
-          const chapterType = card.querySelector(".rv-type").value;
-
-          if (!chapterName) {
-            rvError.textContent = "New chapter name is required.";
-            rvError.style.display = "block";
-            saveBtn.disabled = false;
-            saveBtn.textContent = "Save";
-            return;
-          }
-
-          const { data: newChapter, error: chapterError } = await sb
-            .from("chapters")
-            .insert({
-              property_id: propertyId,
-              chapter_type: chapterType,
-              title: chapterName,
-              metadata: fields,
-              created_by: currentUserId,
-            })
-            .select()
-            .single();
-
-          if (chapterError) {
-            rvError.textContent = chapterError.message;
-            rvError.style.display = "block";
-            saveBtn.disabled = false;
-            saveBtn.textContent = "Save";
-            return;
-          }
-
-          chapterId = newChapter.id;
-          openChapters.unshift({ id: newChapter.id, title: newChapter.title, chapter_type: newChapter.chapter_type });
-        }
-
-        const { error: mediaError } = await sb
-          .from("media")
-          .update({ chapter_id: chapterId, status: "confirmed", title: photoTitle || null, ai_description: description })
-          .eq("id", mediaId);
-
-        if (mediaError) {
-          rvError.textContent = mediaError.message;
-          rvError.style.display = "block";
-          saveBtn.disabled = false;
-          saveBtn.textContent = "Save";
-          return;
-        }
-
-        const savedChapter = openChapters.find(c => c.id === chapterId);
-        card.innerHTML = `<p class="status">Saved to "${savedChapter ? savedChapter.title : ""}"</p>`;
-      });
-    }
-
-    // Same idea as renderReviewForm, but for a group of 2+ photos that were
-    // analyzed together as one item: one shared description/category/
-    // fields set, but each photo keeps its own editable title (Claude is
-    // asked to distinguish views, e.g. "Front of unit" vs "Serial sticker").
-    function renderGroupReviewForm(card, mediaIds, groupSuggestion, titles, imageUrls) {
-      const fieldEntries = Object.entries(groupSuggestion.fields || {});
-      const fieldsHtml = fieldEntries
-        .map(([k, v]) => `
-          <label for="gf_${k}">${k}</label>
-          <input type="text" id="gf_${k}" data-field-key="${k}" value="${String(v).replace(/"/g, "&quot;")}">
-        `)
-        .join("");
-
-      const typeOptionsHtml = CHAPTER_TYPES
-        .map(t => `<option value="${t}" ${t === groupSuggestion.chapter_type ? "selected" : ""}>${t}</option>`)
-        .join("");
-
-      const thumbsHtml = imageUrls
-        .map((url, i) => `
-          <div style="display:inline-block; width:47%; margin:0 2% 0.75rem 0; vertical-align:top;">
-            <img src="${url}" alt="" style="max-width:100%; border-radius:8px;">
-            <input type="text" class="rvg-photo-title" data-index="${i}" value="${(titles[i] || "").replace(/"/g, "&quot;")}" style="margin-top:0.25rem;">
-          </div>
-        `)
-        .join("");
-
-      card.innerHTML = `
-        <p class="status">Review before saving (${imageUrls.length} photos, same item)</p>
-        ${thumbsHtml}
-        <label>Shared description</label>
-        <textarea class="rvg-description" rows="2">${groupSuggestion.description}</textarea>
-        ${fieldsHtml}
-        <label>Save to</label>
-        <select class="rvg-target">
-          <option value="__new__">Create new chapter</option>
-          ${openChapters.length ? `<optgroup label="Attach to existing">${chapterOptionsHtml()}</optgroup>` : ""}
-        </select>
-        <div class="rvg-new-chapter-fields">
-          <label>New chapter name</label>
-          <input type="text" class="rvg-chapter-name" value="${(groupSuggestion.suggested_chapter_name || "").replace(/"/g, "&quot;")}" placeholder="e.g. Kitchen Renovation, New Pool">
-          <label>Category</label>
-          <select class="rvg-type">${typeOptionsHtml}</select>
-        </div>
-        <button type="button" class="rvg-save">Save all ${imageUrls.length} photos</button>
-        <p class="rvg-error error" style="display:none;"></p>
-      `;
-
-      const targetSelect = card.querySelector(".rvg-target");
-      const newChapterFields = card.querySelector(".rvg-new-chapter-fields");
-      const syncNewChapterFieldsVisibility = () => {
-        newChapterFields.style.display = targetSelect.value === "__new__" ? "block" : "none";
-      };
-      targetSelect.addEventListener("change", syncNewChapterFieldsVisibility);
-      syncNewChapterFieldsVisibility();
-
-      card.querySelector(".rvg-save").addEventListener("click", async () => {
-        const saveBtn = card.querySelector(".rvg-save");
-        const rvError = card.querySelector(".rvg-error");
-        const resetBtn = () => { saveBtn.disabled = false; saveBtn.textContent = `Save all ${imageUrls.length} photos`; };
-        rvError.style.display = "none";
-        saveBtn.disabled = true;
-        saveBtn.textContent = "Saving…";
-
-        const description = card.querySelector(".rvg-description").value.trim();
-        const target = targetSelect.value;
-        const fields = {};
-        card.querySelectorAll("[data-field-key]").forEach(input => {
-          if (input.value.trim() !== "") fields[input.dataset.fieldKey] = input.value.trim();
-        });
-        const photoTitles = Array.from(card.querySelectorAll(".rvg-photo-title")).map(i => i.value.trim());
-
-        let chapterId = target;
-
-        if (target === "__new__") {
-          const chapterName = card.querySelector(".rvg-chapter-name").value.trim();
-          const chapterType = card.querySelector(".rvg-type").value;
-
-          if (!chapterName) {
-            rvError.textContent = "New chapter name is required.";
-            rvError.style.display = "block";
-            resetBtn();
-            return;
-          }
-
-          const { data: newChapter, error: chapterError } = await sb
-            .from("chapters")
-            .insert({
-              property_id: propertyId,
-              chapter_type: chapterType,
-              title: chapterName,
-              metadata: fields,
-              created_by: currentUserId,
-            })
-            .select()
-            .single();
-
-          if (chapterError) {
-            rvError.textContent = chapterError.message;
-            rvError.style.display = "block";
-            resetBtn();
-            return;
-          }
-
-          chapterId = newChapter.id;
-          openChapters.unshift({ id: newChapter.id, title: newChapter.title, chapter_type: newChapter.chapter_type });
-        }
-
-        for (let i = 0; i < mediaIds.length; i++) {
-          const { error: mediaError } = await sb
-            .from("media")
-            .update({ chapter_id: chapterId, status: "confirmed", title: photoTitles[i] || null, ai_description: description })
-            .eq("id", mediaIds[i]);
-
-          if (mediaError) {
-            rvError.textContent = mediaError.message;
-            rvError.style.display = "block";
-            resetBtn();
-            return;
-          }
-        }
-
-        const savedChapter = openChapters.find(c => c.id === chapterId);
-        card.innerHTML = `<p class="status">Saved ${imageUrls.length} photos to "${savedChapter ? savedChapter.title : ""}"</p>`;
-      });
-    }
-
-    document.addEventListener("DOMContentLoaded", async () => {
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) {
-        window.location.href = "login.html";
-        return;
-      }
-      currentUserId = session.user.id;
-
-      const { data: properties, error } = await sb
-        .from("properties")
-        .select("id")
-        .order("created_at", { ascending: true })
-        .limit(1);
-
-      if (error || !properties || properties.length === 0) {
-        showError("No property set up yet - go back and create one first.");
-        uploadBtn.disabled = true;
-        return;
-      }
-
-      propertyId = properties[0].id;
-      await refreshOpenChapters();
-      await loadPendingReview();
-    });
-
-    // Photos that were uploaded (and analyzed) in an earlier visit but never
-    // got confirmed into a chapter - e.g. the page was closed before saving.
-    // Without this, they'd be stuck forever with no way to revisit them.
-    async function loadPendingReview() {
-      const { data: pending, error } = await sb
-        .from("media")
-        .select("id, storage_path, ai_description, ai_extracted, caption")
-        .eq("property_id", propertyId)
-        .eq("status", "pending_review")
-        .is("chapter_id", null)
-        .order("created_at", { ascending: true });
-
-      if (error || !pending || pending.length === 0) return;
-
-      const heading = document.createElement("h2");
-      heading.textContent = `Needs review (${pending.length})`;
-      heading.style.fontSize = "1rem";
-      needsReviewEl.appendChild(heading);
-
-      for (const row of pending) {
-        const card = document.createElement("div");
-        card.className = "card";
-        card.style.marginTop = "1rem";
-        needsReviewEl.appendChild(card);
-
-        const { data: signed } = await sb.storage
-          .from("houstory-media")
-          .createSignedUrl(row.storage_path, 3600);
-
-        const suggestion = row.ai_extracted && row.ai_extracted.suggested;
-
-        if (!suggestion) {
-          card.innerHTML = `
-            ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
-            <p class="status">Not analyzed yet.</p>
-          `;
-          continue;
-        }
-
-        renderReviewForm(card, row.id, suggestion, signed ? signed.signedUrl : null);
-      }
-    }
-
-    async function uploadOneFile(file, note, userId) {
+    async function uploadOneFile(file, caption, userId) {
       const storagePath = `${propertyId}/${crypto.randomUUID()}-${file.name}`;
       const { error: uploadError } = await sb.storage
         .from("houstory-media")
@@ -564,7 +60,7 @@
 
       const { data: mediaRow, error: insertError } = await sb
         .from("media")
-        .insert({ property_id: propertyId, kind: "photo", storage_path: storagePath, caption: note, uploaded_by: userId })
+        .insert({ property_id: propertyId, kind: "photo", storage_path: storagePath, caption, uploaded_by: userId })
         .select()
         .single();
       if (insertError) throw new Error(`Save failed: ${insertError.message}`);
@@ -595,69 +91,113 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorBox.style.display = "none";
-      resultsEl.innerHTML = "";
       uploadBtn.disabled = true;
       uploadBtn.textContent = "Working…";
 
       const { data: { user } } = await sb.auth.getUser();
-      const note = document.getElementById("note").value.trim() || null;
-      const grouped = groupedIndexSet();
+      const instructions = document.getElementById("instructions").value.trim();
+      const files = Array.from(document.getElementById("files").files);
 
-      for (const indices of groups) {
-        const files = indices.map(i => selectedFiles[i]);
-        const card = addResultCard(`${files.length} photos (grouped): ${files.map(f => f.name).join(", ")}`);
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.marginTop = "1rem";
+      card.innerHTML = `<p class="status">Uploading ${files.length} photo(s)…</p>`;
+      resultsEl.insertBefore(card, resultsEl.firstChild);
 
-        let mediaRows;
-        try {
-          mediaRows = [];
-          for (const file of files) mediaRows.push(await uploadOneFile(file, note, user.id));
-        } catch (uploadErr) {
-          setStatus(card, uploadErr.message);
-          continue;
-        }
-
-        setStatus(card, "Analyzing with Claude (as one item)…");
-
-        let analysis;
-        try {
-          analysis = await callAnalyze({ media_ids: mediaRows.map(m => m.id) });
-        } catch (analyzeError) {
-          setStatus(card, `Analysis failed: ${analyzeError.message}`);
-          continue;
-        }
-
-        const imageUrls = files.map(f => URL.createObjectURL(f));
-        renderGroupReviewForm(card, mediaRows.map(m => m.id), analysis.group, analysis.titles, imageUrls);
+      let mediaRows;
+      try {
+        mediaRows = [];
+        for (const file of files) mediaRows.push(await uploadOneFile(file, instructions || null, user.id));
+      } catch (uploadErr) {
+        card.innerHTML = `<p class="status">${uploadErr.message}</p>`;
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = "Submit to Claude";
+        return;
       }
 
-      for (let i = 0; i < selectedFiles.length; i++) {
-        if (grouped.has(i)) continue;
-        const file = selectedFiles[i];
-        const card = addResultCard(file.name);
+      card.querySelector(".status").textContent = "Analyzing with Claude…";
 
-        let mediaRow;
-        try {
-          mediaRow = await uploadOneFile(file, note, user.id);
-        } catch (uploadErr) {
-          setStatus(card, uploadErr.message);
-          continue;
-        }
-
-        setStatus(card, "Analyzing with Claude…");
-
-        let analysis;
-        try {
-          analysis = await callAnalyze({ media_id: mediaRow.id });
-        } catch (analyzeError) {
-          setStatus(card, `Analysis failed: ${analyzeError.message}`);
-          continue;
-        }
-
-        renderReviewForm(card, mediaRow.id, analysis.suggestion, URL.createObjectURL(file));
+      let result;
+      try {
+        result = await callAnalyze({ media_ids: mediaRows.map(m => m.id), instructions });
+      } catch (analyzeError) {
+        card.innerHTML = `<p class="status">Analysis failed: ${analyzeError.message}</p>`;
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = "Submit to Claude";
+        return;
       }
 
+      const imageUrls = files.map(f => URL.createObjectURL(f));
+      card.innerHTML = `
+        ${imageUrls.map(u => `<img src="${u}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`).join("")}
+        <p class="claude-response" style="white-space:pre-wrap;"></p>
+        <p style="color: var(--hs-muted); font-size: 0.85rem;">Saved unfiled - add to a chapter later from that chapter's page.</p>
+      `;
+      card.querySelector(".claude-response").textContent = result.response;
+
+      form.reset();
       uploadBtn.disabled = false;
-      uploadBtn.textContent = "Upload & analyze";
+      uploadBtn.textContent = "Submit to Claude";
+
+      loadUnfiled();
+    });
+
+    // Simple read-only gallery of photos that have been analyzed but not
+    // yet filed into a chapter - filing happens on chapter.html now
+    // (its "add existing photos" picker), not here.
+    async function loadUnfiled() {
+      needsReviewEl.innerHTML = "";
+
+      const { data: unfiled, error } = await sb
+        .from("media")
+        .select("id, storage_path, caption, ai_description")
+        .eq("property_id", propertyId)
+        .is("chapter_id", null)
+        .order("created_at", { ascending: false });
+
+      if (error || !unfiled || unfiled.length === 0) return;
+
+      const heading = document.createElement("h2");
+      heading.textContent = `Unfiled (${unfiled.length})`;
+      heading.style.fontSize = "1rem";
+      needsReviewEl.appendChild(heading);
+
+      for (const row of unfiled) {
+        const { data: signed } = await sb.storage.from("houstory-media").createSignedUrl(row.storage_path, 3600);
+
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.marginTop = "1rem";
+        card.innerHTML = `
+          ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+          <p class="unfiled-response" style="white-space:pre-wrap;"></p>
+        `;
+        card.querySelector(".unfiled-response").textContent = row.ai_description || "Not analyzed yet.";
+        needsReviewEl.appendChild(card);
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        window.location.href = "login.html";
+        return;
+      }
+
+      const { data: properties, error } = await sb
+        .from("properties")
+        .select("id")
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (error || !properties || properties.length === 0) {
+        showError("No property set up yet - go back and create one first.");
+        uploadBtn.disabled = true;
+        return;
+      }
+
+      propertyId = properties[0].id;
+      await loadUnfiled();
     });
   </script>
 </body>

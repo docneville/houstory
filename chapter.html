@@ -21,6 +21,16 @@
       <p>Photos</p>
       <div id="photoGrid"></div>
     </div>
+
+    <div id="unfiledCard" class="card" style="margin-top:1rem; display:none;">
+      <p>Add existing unfiled photos</p>
+      <p style="color: var(--hs-muted); margin: 0 0 0.5rem; font-size: 0.9rem;">
+        Photos analyzed on the Analyze page but not yet filed anywhere. Check any that belong here.
+      </p>
+      <div id="unfiledList"></div>
+      <button type="button" id="addUnfiledBtn">Add selected to this chapter</button>
+      <p id="unfiledError" class="error" style="display:none;"></p>
+    </div>
   </main>
 
   <script>
@@ -34,6 +44,10 @@
     const chapterCard = document.getElementById("chapterCard");
     const photosCard = document.getElementById("photosCard");
     const photoGrid = document.getElementById("photoGrid");
+    const unfiledCard = document.getElementById("unfiledCard");
+    const unfiledList = document.getElementById("unfiledList");
+    const addUnfiledBtn = document.getElementById("addUnfiledBtn");
+    const unfiledError = document.getElementById("unfiledError");
 
     const params = new URLSearchParams(location.search);
     const chapterId = params.get("id");
@@ -127,7 +141,7 @@
       });
 
       chapterCard.querySelector(".ch-delete").addEventListener("click", async () => {
-        const ok = confirm(`Delete "${chapter.title}"? Its photos will NOT be deleted - they'll go back to "needs review" on the upload page, unfiled.`);
+        const ok = confirm(`Delete "${chapter.title}"? Its photos will NOT be deleted - they'll become unfiled and can be added to another chapter from that chapter's page.`);
         if (!ok) return;
 
         const deleteBtn = chapterCard.querySelector(".ch-delete");
@@ -224,7 +238,77 @@
       });
 
       await loadPhotos();
+      await loadUnfiledPhotos();
     }
+
+    // Photos analyzed via upload.html but never filed anywhere (chapter_id
+    // null). Lets you file one or several into THIS chapter at once - this
+    // is also how a batch of photos (e.g. a folder of renovation shots) get
+    // bulk-assigned to one chapter, since upload.html no longer forces a
+    // per-photo filing decision at analysis time.
+    async function loadUnfiledPhotos() {
+      const { data: unfiled, error } = await sb
+        .from("media")
+        .select("id, storage_path, ai_description")
+        .eq("property_id", propertyId)
+        .is("chapter_id", null)
+        .order("created_at", { ascending: false });
+
+      if (error || !unfiled || unfiled.length === 0) {
+        unfiledCard.style.display = "none";
+        return;
+      }
+
+      unfiledCard.style.display = "block";
+      unfiledList.innerHTML = "";
+
+      for (const photo of unfiled) {
+        const { data: signed } = await sb.storage.from("houstory-media").createSignedUrl(photo.storage_path, 3600);
+
+        const row = document.createElement("label");
+        row.style.display = "block";
+        row.style.fontWeight = "normal";
+        row.style.margin = "0.75rem 0";
+        row.innerHTML = `
+          <input type="checkbox" class="unfiled-checkbox" value="${photo.id}" style="width:auto; display:inline; vertical-align:top;">
+          ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:120px; border-radius:8px; vertical-align:top; margin:0 0.5rem;">` : ""}
+          <span class="unfiled-desc" style="display:inline-block; max-width:70%; vertical-align:top; white-space:pre-wrap;"></span>
+        `;
+        row.querySelector(".unfiled-desc").textContent = photo.ai_description || "Not analyzed yet.";
+        unfiledList.appendChild(row);
+      }
+    }
+
+    addUnfiledBtn.addEventListener("click", async () => {
+      const checked = Array.from(unfiledList.querySelectorAll(".unfiled-checkbox:checked")).map(cb => cb.value);
+      unfiledError.style.display = "none";
+
+      if (checked.length === 0) {
+        unfiledError.textContent = "Check at least one photo first.";
+        unfiledError.style.display = "block";
+        return;
+      }
+
+      addUnfiledBtn.disabled = true;
+      addUnfiledBtn.textContent = "Adding…";
+
+      const { error } = await sb
+        .from("media")
+        .update({ chapter_id: chapterId, status: "confirmed" })
+        .in("id", checked);
+
+      addUnfiledBtn.disabled = false;
+      addUnfiledBtn.textContent = "Add selected to this chapter";
+
+      if (error) {
+        unfiledError.textContent = error.message;
+        unfiledError.style.display = "block";
+        return;
+      }
+
+      await loadPhotos();
+      await loadUnfiledPhotos();
+    });
 
     async function loadOtherChapters() {
       const { data, error } = await sb
