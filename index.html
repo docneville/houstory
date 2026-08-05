@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Houstory</title>
   <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <header>
     <h1>Houstory</h1>
     <p>The story of your home, in photos.</p>
-    <p><a href="login.html">Sign in</a></p>
+    <p><a href="login.html" id="entryLink">Sign in</a></p>
   </header>
   <main>
     <div class="card">
@@ -19,5 +20,21 @@
       them all in one place.</p>
     </div>
   </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const { data: { session } } = await sb.auth.getSession();
+
+      if (session) {
+        const link = document.getElementById("entryLink");
+        link.textContent = "Go to your home";
+        link.href = "app.html";
+      }
+    });
+  </script>
 </body>
 </html>
