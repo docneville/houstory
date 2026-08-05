@@ -45,6 +45,19 @@ function err(msg: string, status = 400) {
 const DEFAULT_INSTRUCTIONS =
   "Describe what's in this photo and call out any useful details you can make out - brand, model/serial numbers, color, condition, text on labels, anything a homeowner might want on record.";
 
+// houstory-96t.6: without web search, Claude can only describe a plausible
+// way to find something ("check the manufacturer's Support page") since it
+// has no way to fetch or verify a real URL. This system prompt doesn't
+// override the user's own instructions (that's still the whole point of
+// houstory-96t.23's freeform pivot) - it just tells Claude the tool exists
+// and to prefer concrete results over descriptions of a search strategy.
+const SYSTEM_PROMPT =
+  "You are helping analyze a photo for Houstory, an app for tracking a home's renovations, landscaping, paint colors, appliances, and history. " +
+  "You have a web_search tool available. When the user's instructions call for it - e.g. finding a product's manual, a retailer's contact info, " +
+  "warranty/recall info, or local repair services for a brand/model you've identified - use it and give concrete results: actual links, " +
+  "business names, addresses, phone numbers. Don't just describe how someone could search for these themselves. If the instructions don't call " +
+  "for a lookup, don't force a search.";
+
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { status: 200, headers: corsHeaders });
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405, headers: corsHeaders });
@@ -113,7 +126,9 @@ serve(async (req: Request): Promise<Response> => {
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 1024,
+      max_tokens: 2048,
+      system: SYSTEM_PROMPT,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
       messages: [{ role: "user", content }],
     }),
   });
@@ -124,10 +139,14 @@ serve(async (req: Request): Promise<Response> => {
   }
 
   const anthropicData = await anthropicRes.json();
-  const textBlock = (anthropicData.content ?? []).find((b: any) => b.type === "text");
-  if (!textBlock) return err("Claude did not return a text response", 502);
+  // With web search enabled, the response can interleave server_tool_use /
+  // web_search_tool_result blocks between multiple text blocks (a query,
+  // then a synthesis, sometimes more than once) - join all text blocks in
+  // order rather than assuming the first (or only) one is the whole answer.
+  const textBlocks = (anthropicData.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text);
+  if (textBlocks.length === 0) return err("Claude did not return a text response", 502);
 
-  const responseText = textBlock.text;
+  const responseText = textBlocks.join("\n\n");
 
   for (const id of media_ids) {
     const { error: updateErr } = await sb.from("media").update({ ai_description: responseText }).eq("id", id);

@@ -22,6 +22,12 @@
         </p>
         <label for="instructions">Instructions for Claude</label>
         <textarea id="instructions" rows="3" placeholder="e.g. Look for the model and serial number on this appliance's label, and tell me the brand. Leave blank for a general description."></textarea>
+        <p style="color: var(--hs-muted); margin: 0.25rem 0 0; font-size: 0.9rem;">
+          Claude can search the web when it helps (finding a manual, a retailer's contact info,
+          local repair services, etc). It does best with one focused ask per submission -
+          e.g. "find the manual" as one submission, "find local repair services" as another -
+          rather than asking for several different lookups at once.
+        </p>
         <button type="submit" id="uploadBtn">Submit to Claude</button>
       </form>
       <p id="errorBox" class="error" style="display:none;"></p>
