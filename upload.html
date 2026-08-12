@@ -50,7 +50,15 @@
     const resultsEl = document.getElementById("results");
     const needsReviewEl = document.getElementById("needsReview");
 
+    const CHAPTER_TYPES = ["renovation", "landscaping", "paint", "appliance", "research", "general"];
+
     let propertyId = null;
+    let currentUserId = null;
+    // Chapters available as "file into" targets in the Unfiled section.
+    // Refreshed on load and after creating a new one, so filing a second
+    // unfiled group can immediately target a chapter just created for the
+    // first one.
+    let openChapters = [];
 
     function showError(msg) {
       errorBox.textContent = msg;
@@ -256,7 +264,7 @@
         <div class="card-body">
           ${imageUrls.map(u => `<img src="${u}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`).join("")}
           <div class="rendered-response" style="white-space:pre-wrap;"></div>
-          <p style="color: var(--hs-muted); font-size: 0.85rem;">Saved unfiled - add to a chapter later from that chapter's page.</p>
+          <p style="color: var(--hs-muted); font-size: 0.85rem;">Saved unfiled - file it into a chapter in the Unfiled section below.</p>
         </div>
       `;
       card.querySelector(".card-summary-title").textContent = deriveSummary(result.response);
@@ -270,14 +278,27 @@
       loadUnfiled();
     });
 
+    async function refreshOpenChapters() {
+      const { data, error } = await sb
+        .from("chapters")
+        .select("id, title, chapter_type")
+        .eq("property_id", propertyId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false });
+
+      if (!error) openChapters = data || [];
+    }
+
     // Gallery of photos that have been analyzed but not yet filed into a
-    // chapter - filing happens on chapter.html now (its "add existing
-    // photos" picker), not here. Photos submitted together share an
+    // chapter. houstory-96t.32: this is now the ONE place filing happens -
+    // it used to also be duplicated at the bottom of every chapter page,
+    // which was confusing. Photos submitted together share an
     // upload_batch_id, so they're grouped into one card with one shared
     // description instead of repeating it per photo. Rows without a batch
     // id (e.g. from before this existed) just become their own group of 1.
     async function loadUnfiled() {
       needsReviewEl.innerHTML = "";
+      await refreshOpenChapters();
 
       const { data: unfiled, error } = await sb
         .from("media")
@@ -320,6 +341,8 @@
             : "")
           .join("");
 
+        const typeOptionsHtml = CHAPTER_TYPES.map(t => `<option value="${t}">${t}</option>`).join("");
+
         card.innerHTML = `
           <div class="card-summary">
             ${firstThumb ? `<img src="${firstThumb}" alt="" class="card-summary-thumb">` : ""}
@@ -329,6 +352,18 @@
           <div class="card-body">
             ${thumbsHtml}
             <div class="rendered-response" style="white-space:pre-wrap;"></div>
+            <label>File into a chapter</label>
+            <select class="unfiled-target">
+              <option value="__new__">Create new chapter</option>
+              ${openChapters.map(c => `<option value="${c.id}">${c.title} (${c.chapter_type})</option>`).join("")}
+            </select>
+            <div class="unfiled-new-chapter-fields">
+              <label>New chapter name</label>
+              <input type="text" class="unfiled-chapter-name" placeholder="e.g. Kitchen Renovation, Paint Colors">
+              <label>Category</label>
+              <select class="unfiled-chapter-type">${typeOptionsHtml}</select>
+            </div>
+            <button type="button" class="unfiled-file-btn">File</button>
             <button type="button" class="unfiled-delete" style="background:#b3261e;">Delete</button>
             <p class="unfiled-error error" style="display:none;"></p>
           </div>
@@ -337,6 +372,72 @@
         card.querySelector(".rendered-response").innerHTML = renderClaudeResponse(group[0].ai_description) || "Not analyzed yet.";
         needsReviewEl.appendChild(card);
         wireCardToggle(card, false); // browsing gallery - collapsed by default
+
+        const targetSelect = card.querySelector(".unfiled-target");
+        const newChapterFields = card.querySelector(".unfiled-new-chapter-fields");
+        const syncNewChapterFieldsVisibility = () => {
+          newChapterFields.style.display = targetSelect.value === "__new__" ? "block" : "none";
+        };
+        targetSelect.addEventListener("change", syncNewChapterFieldsVisibility);
+        syncNewChapterFieldsVisibility();
+
+        card.querySelector(".unfiled-file-btn").addEventListener("click", async () => {
+          const fileBtn = card.querySelector(".unfiled-file-btn");
+          const errEl = card.querySelector(".unfiled-error");
+          errEl.style.display = "none";
+          fileBtn.disabled = true;
+          fileBtn.textContent = "Filing…";
+
+          let targetId = targetSelect.value;
+
+          if (targetId === "__new__") {
+            const chapterName = card.querySelector(".unfiled-chapter-name").value.trim();
+            const chapterType = card.querySelector(".unfiled-chapter-type").value;
+
+            if (!chapterName) {
+              errEl.textContent = "New chapter name is required.";
+              errEl.style.display = "block";
+              fileBtn.disabled = false;
+              fileBtn.textContent = "File";
+              return;
+            }
+
+            const { data: newChapter, error: chapterError } = await sb
+              .from("chapters")
+              .insert({ property_id: propertyId, chapter_type: chapterType, title: chapterName, created_by: currentUserId })
+              .select()
+              .single();
+
+            if (chapterError) {
+              errEl.textContent = chapterError.message;
+              errEl.style.display = "block";
+              fileBtn.disabled = false;
+              fileBtn.textContent = "File";
+              return;
+            }
+
+            targetId = newChapter.id;
+            openChapters.unshift({ id: newChapter.id, title: newChapter.title, chapter_type: newChapter.chapter_type });
+          }
+
+          const { error: fileError } = await sb
+            .from("media")
+            .update({ chapter_id: targetId, status: "confirmed" })
+            .in("id", group.map(row => row.id));
+
+          if (fileError) {
+            errEl.textContent = fileError.message;
+            errEl.style.display = "block";
+            fileBtn.disabled = false;
+            fileBtn.textContent = "File";
+            return;
+          }
+
+          // Reload the whole list rather than just removing this card - if
+          // a new chapter was just created, other still-unfiled cards'
+          // dropdowns need to pick it up too.
+          await loadUnfiled();
+        });
 
         card.querySelector(".unfiled-delete").addEventListener("click", async () => {
           const count = group.length;
@@ -370,6 +471,7 @@
         window.location.href = "login.html";
         return;
       }
+      currentUserId = session.user.id;
 
       const { data: properties, error } = await sb
         .from("properties")
