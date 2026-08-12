@@ -55,6 +55,62 @@
     let propertyId = null;
     let otherChapters = [];
 
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    // houstory-96t.30: minimal, safe subset of markdown -> HTML for
+    // Claude's responses (bold section headers, clickable links). Not a
+    // full markdown parser on purpose - tables/lists stay as plain text.
+    // Text is HTML-escaped FIRST, so everything inserted after that point
+    // is only the specific tags built here, never raw text from Claude.
+    function renderClaudeResponse(text) {
+      if (!text) return "";
+      let html = escapeHtml(text);
+
+      html = html.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g,
+        (match, linkText, linkUrl, bareUrl) => {
+          if (linkUrl) return `<a href="${linkUrl}" target="_blank" rel="noopener">${linkText}</a>`;
+          const trailing = (bareUrl.match(/[.,;:!?)]+$/) || [""])[0];
+          const cleanUrl = trailing ? bareUrl.slice(0, -trailing.length) : bareUrl;
+          return `<a href="${cleanUrl}" target="_blank" rel="noopener">${cleanUrl}</a>${trailing}`;
+        }
+      );
+
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/^#{1,6}\s*(.+)$/gm, "<strong>$1</strong>");
+
+      return html;
+    }
+
+    function deriveSummary(text, maxLen = 70) {
+      if (!text) return "No description yet.";
+      const firstLine = text.split("\n").find(l => l.trim().length > 0) || text;
+      const cleaned = firstLine.replace(/^#{1,6}\s*/, "").replace(/\*\*/g, "").trim();
+      return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "…" : cleaned;
+    }
+
+    // houstory-96t.31: shared collapse/expand wiring for a card that has a
+    // .card-summary (click target) and a .card-body (the collapsible part).
+    function wireCardToggle(card, startExpanded) {
+      const body = card.querySelector(".card-body");
+      const toggle = card.querySelector(".card-expand-toggle");
+      body.style.display = startExpanded ? "block" : "none";
+      toggle.classList.toggle("open", !!startExpanded);
+
+      card.querySelector(".card-summary").addEventListener("click", () => {
+        const isOpen = body.style.display !== "none";
+        body.style.display = isOpen ? "none" : "block";
+        toggle.classList.toggle("open", !isOpen);
+      });
+    }
+
     function typeOptionsHtml(selected) {
       return CHAPTER_TYPES.map(t => `<option value="${t}" ${t === selected ? "selected" : ""}>${t}</option>`).join("");
     }
@@ -272,9 +328,9 @@
         row.innerHTML = `
           <input type="checkbox" class="unfiled-checkbox" value="${photo.id}" style="width:auto; display:inline; vertical-align:top;">
           ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:120px; border-radius:8px; vertical-align:top; margin:0 0.5rem;">` : ""}
-          <span class="unfiled-desc" style="display:inline-block; max-width:70%; vertical-align:top; white-space:pre-wrap;"></span>
+          <span class="unfiled-desc rendered-response" style="display:inline-block; max-width:70%; vertical-align:top; white-space:pre-wrap;"></span>
         `;
-        row.querySelector(".unfiled-desc").textContent = photo.ai_description || "Not analyzed yet.";
+        row.querySelector(".unfiled-desc").innerHTML = renderClaudeResponse(photo.ai_description) || "Not analyzed yet.";
         unfiledList.appendChild(row);
       }
     }
@@ -342,21 +398,44 @@
         el.className = "card";
         el.style.marginTop = "1rem";
         el.innerHTML = `
-          ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
-          <label>Title</label>
-          <input type="text" class="ph-title" value="${(photo.title || "").replace(/"/g, "&quot;")}">
-          <label>Description</label>
-          <textarea class="ph-description" rows="2">${photo.ai_description || ""}</textarea>
-          <label>Move to</label>
-          <select class="ph-move">
-            <option value="">— keep here —</option>
-            ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
-          </select>
-          <button type="button" class="ph-save">Save</button>
-          <button type="button" class="ph-delete" style="background:#b3261e;">Delete photo</button>
-          <p class="ph-error error" style="display:none;"></p>
+          <div class="card-summary">
+            ${signed ? `<img src="${signed.signedUrl}" alt="" class="card-summary-thumb">` : ""}
+            <span class="card-summary-title"></span>
+            <span class="card-expand-toggle">&#9656;</span>
+          </div>
+          <div class="card-body">
+            ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+            <label>Title</label>
+            <input type="text" class="ph-title" value="${(photo.title || "").replace(/"/g, "&quot;")}">
+            <label>Description</label>
+            <div class="rendered-response ph-description-view" style="white-space:pre-wrap;"></div>
+            <textarea class="ph-description" rows="4" style="display:none;">${photo.ai_description || ""}</textarea>
+            <button type="button" class="ph-edit-toggle">Edit description</button>
+            <label>Move to</label>
+            <select class="ph-move">
+              <option value="">— keep here —</option>
+              ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
+            </select>
+            <button type="button" class="ph-save">Save</button>
+            <button type="button" class="ph-delete" style="background:#b3261e;">Delete photo</button>
+            <p class="ph-error error" style="display:none;"></p>
+          </div>
         `;
+        el.querySelector(".card-summary-title").textContent = photo.title || deriveSummary(photo.ai_description);
+        el.querySelector(".ph-description-view").innerHTML = renderClaudeResponse(photo.ai_description) || "No description yet.";
         photoGrid.appendChild(el);
+        wireCardToggle(el, false); // browsing chapter photos - collapsed by default
+
+        el.querySelector(".ph-edit-toggle").addEventListener("click", () => {
+          const view = el.querySelector(".ph-description-view");
+          const textarea = el.querySelector(".ph-description");
+          const editBtn = el.querySelector(".ph-edit-toggle");
+          const nowEditing = textarea.style.display === "none";
+          view.style.display = nowEditing ? "none" : "block";
+          textarea.style.display = nowEditing ? "block" : "none";
+          if (!nowEditing) view.innerHTML = renderClaudeResponse(textarea.value) || "No description yet.";
+          editBtn.textContent = nowEditing ? "Done editing" : "Edit description";
+        });
 
         el.querySelector(".ph-save").addEventListener("click", async () => {
           const saveBtn = el.querySelector(".ph-save");
@@ -385,6 +464,8 @@
           if (moveTo) {
             el.remove();
           } else {
+            el.querySelector(".card-summary-title").textContent = newTitle || deriveSummary(newDescription);
+            el.querySelector(".ph-description-view").innerHTML = renderClaudeResponse(newDescription) || "No description yet.";
             saveBtn.disabled = false;
             saveBtn.textContent = "Saved";
             setTimeout(() => { saveBtn.textContent = "Save"; }, 1500);

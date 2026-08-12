@@ -97,3 +97,43 @@ button:disabled {
 .chapter-list li:last-child {
   border-bottom: none;
 }
+
+.rendered-response a {
+  color: var(--hs-accent);
+}
+
+.card-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+
+.card-summary-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.card-summary-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-expand-toggle {
+  color: var(--hs-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.card-expand-toggle.open {
+  transform: rotate(90deg);
+}
+
+.card-body {
+  margin-top: 0.75rem;
+}

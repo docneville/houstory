@@ -57,6 +57,64 @@
       errorBox.style.display = "block";
     }
 
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    // houstory-96t.30: minimal, safe subset of markdown -> HTML for
+    // Claude's responses (bold section headers, clickable links). Not a
+    // full markdown parser on purpose - tables/lists stay as plain text.
+    // Text is HTML-escaped FIRST, so everything inserted after that point
+    // is only the specific tags built here, never raw text from Claude.
+    function renderClaudeResponse(text) {
+      if (!text) return "";
+      let html = escapeHtml(text);
+
+      // Markdown links [text](url) and bare URLs -> real hyperlinks, in one
+      // pass so a markdown link's URL isn't ALSO caught by the bare-URL branch.
+      html = html.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g,
+        (match, linkText, linkUrl, bareUrl) => {
+          if (linkUrl) return `<a href="${linkUrl}" target="_blank" rel="noopener">${linkText}</a>`;
+          const trailing = (bareUrl.match(/[.,;:!?)]+$/) || [""])[0];
+          const cleanUrl = trailing ? bareUrl.slice(0, -trailing.length) : bareUrl;
+          return `<a href="${cleanUrl}" target="_blank" rel="noopener">${cleanUrl}</a>${trailing}`;
+        }
+      );
+
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/^#{1,6}\s*(.+)$/gm, "<strong>$1</strong>");
+
+      return html;
+    }
+
+    function deriveSummary(text, maxLen = 70) {
+      if (!text) return "Not analyzed yet.";
+      const firstLine = text.split("\n").find(l => l.trim().length > 0) || text;
+      const cleaned = firstLine.replace(/^#{1,6}\s*/, "").replace(/\*\*/g, "").trim();
+      return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "…" : cleaned;
+    }
+
+    // houstory-96t.31: shared collapse/expand wiring for a card that has a
+    // .card-summary (click target) and a .card-body (the collapsible part).
+    function wireCardToggle(card, startExpanded) {
+      const body = card.querySelector(".card-body");
+      const toggle = card.querySelector(".card-expand-toggle");
+      body.style.display = startExpanded ? "block" : "none";
+      toggle.classList.toggle("open", !!startExpanded);
+
+      card.querySelector(".card-summary").addEventListener("click", () => {
+        const isOpen = body.style.display !== "none";
+        body.style.display = isOpen ? "none" : "block";
+        toggle.classList.toggle("open", !isOpen);
+      });
+    }
+
     // Use getSession() rather than getUser() to get the current user - v2
     // of supabase-js auto-refreshes an expired access token inside
     // getSession() as long as the refresh token is still valid, while
@@ -190,11 +248,20 @@
 
       const imageUrls = files.map(f => URL.createObjectURL(f));
       card.innerHTML = `
-        ${imageUrls.map(u => `<img src="${u}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`).join("")}
-        <p class="claude-response" style="white-space:pre-wrap;"></p>
-        <p style="color: var(--hs-muted); font-size: 0.85rem;">Saved unfiled - add to a chapter later from that chapter's page.</p>
+        <div class="card-summary">
+          ${imageUrls[0] ? `<img src="${imageUrls[0]}" alt="" class="card-summary-thumb">` : ""}
+          <span class="card-summary-title"></span>
+          <span class="card-expand-toggle">&#9656;</span>
+        </div>
+        <div class="card-body">
+          ${imageUrls.map(u => `<img src="${u}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">`).join("")}
+          <div class="rendered-response" style="white-space:pre-wrap;"></div>
+          <p style="color: var(--hs-muted); font-size: 0.85rem;">Saved unfiled - add to a chapter later from that chapter's page.</p>
+        </div>
       `;
-      card.querySelector(".claude-response").textContent = result.response;
+      card.querySelector(".card-summary-title").textContent = deriveSummary(result.response);
+      card.querySelector(".rendered-response").innerHTML = renderClaudeResponse(result.response);
+      wireCardToggle(card, true); // freshly generated - show it expanded by default
 
       form.reset();
       uploadBtn.disabled = false;
@@ -246,6 +313,7 @@
         card.className = "card";
         card.style.marginTop = "1rem";
 
+        const firstThumb = signedUrls[0]?.data?.signedUrl;
         const thumbsHtml = signedUrls
           .map(({ data }) => data
             ? `<img src="${data.signedUrl}" alt="" style="max-width:${group.length > 1 ? "47%" : "100%"}; display:inline-block; margin:0 2% 0.5rem 0; border-radius:8px;">`
@@ -253,13 +321,22 @@
           .join("");
 
         card.innerHTML = `
-          ${thumbsHtml}
-          <p class="unfiled-response" style="white-space:pre-wrap;"></p>
-          <button type="button" class="unfiled-delete" style="background:#b3261e;">Delete</button>
-          <p class="unfiled-error error" style="display:none;"></p>
+          <div class="card-summary">
+            ${firstThumb ? `<img src="${firstThumb}" alt="" class="card-summary-thumb">` : ""}
+            <span class="card-summary-title"></span>
+            <span class="card-expand-toggle">&#9656;</span>
+          </div>
+          <div class="card-body">
+            ${thumbsHtml}
+            <div class="rendered-response" style="white-space:pre-wrap;"></div>
+            <button type="button" class="unfiled-delete" style="background:#b3261e;">Delete</button>
+            <p class="unfiled-error error" style="display:none;"></p>
+          </div>
         `;
-        card.querySelector(".unfiled-response").textContent = group[0].ai_description || "Not analyzed yet.";
+        card.querySelector(".card-summary-title").textContent = deriveSummary(group[0].ai_description);
+        card.querySelector(".rendered-response").innerHTML = renderClaudeResponse(group[0].ai_description) || "Not analyzed yet.";
         needsReviewEl.appendChild(card);
+        wireCardToggle(card, false); // browsing gallery - collapsed by default
 
         card.querySelector(".unfiled-delete").addEventListener("click", async () => {
           const count = group.length;
