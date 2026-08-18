@@ -34,9 +34,13 @@
       <p id="createError" class="error" style="display:none;"></p>
     </div>
 
+    <div id="addCard" style="display:none; text-align:center; margin-bottom:1rem;">
+      <a href="upload.html" class="hs-btn-primary">+ Add</a>
+    </div>
+
     <div id="chaptersCard" class="card" style="display:none;">
-      <p>Chapters</p>
-      <p><a href="upload.html">Add</a> &middot; <a href="manage-chapters.html">Manage Chapters</a></p>
+      <h2>Chapters</h2>
+      <p><a href="manage-chapters.html">Manage Chapters</a></p>
       <div id="chapterButtons" class="chapter-buttons"></div>
       <p id="emptyState" style="display:none; color: var(--hs-muted);">
         No chapters yet.
@@ -52,6 +56,7 @@
 
     const propertyLabel = document.getElementById("propertyLabel");
     const createCard = document.getElementById("createPropertyCard");
+    const addCard = document.getElementById("addCard");
     const chaptersCard = document.getElementById("chaptersCard");
     const propertyForm = document.getElementById("propertyForm");
     const createError = document.getElementById("createError");
@@ -140,6 +145,7 @@
         ? `${property.nickname} — ${property.city}, ${property.state}`
         : `${property.address_line1}, ${property.city}, ${property.state}`;
 
+      addCard.style.display = "block";
       chaptersCard.style.display = "block";
 
       const { data: chapters, error: chError } = await sb

@@ -90,6 +90,26 @@ button:disabled {
   cursor: default;
 }
 
+.hs-btn-primary {
+  display: inline-block;
+  padding: 0.85rem 2.25rem;
+  border-radius: 10px;
+  background: var(--hs-accent);
+  color: #fff;
+  text-decoration: none;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.hs-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
 .hs-btn-google {
   width: 100%;
   display: flex;
