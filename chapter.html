@@ -296,7 +296,7 @@
     async function loadPhotos() {
       const { data: photos, error } = await sb
         .from("media")
-        .select("id, storage_path, caption, title, ai_description")
+        .select("id, storage_path, caption, title, ai_description, upload_batch_id")
         .eq("chapter_id", chapterId)
         .order("created_at", { ascending: true });
 
@@ -305,27 +305,52 @@
       photosCard.style.display = "block";
       photoGrid.innerHTML = "";
 
-      for (const photo of photos) {
-        const { data: signed } = await sb.storage
-          .from("houstory-media")
-          .createSignedUrl(photo.storage_path, 3600);
+      // houstory-xq7: photos submitted together share an upload_batch_id and
+      // one Claude description (upload.html's Unfiled gallery already groups
+      // on this - this mirrors that same logic, which chapter.html never had,
+      // so filed batches kept showing one duplicate card per photo).
+      const groups = [];
+      const batchIndex = new Map();
+      for (const row of photos) {
+        if (row.upload_batch_id && batchIndex.has(row.upload_batch_id)) {
+          groups[batchIndex.get(row.upload_batch_id)].push(row);
+        } else {
+          if (row.upload_batch_id) batchIndex.set(row.upload_batch_id, groups.length);
+          groups.push([row]);
+        }
+      }
+
+      for (const group of groups) {
+        const signedUrls = await Promise.all(
+          group.map(row => sb.storage.from("houstory-media").createSignedUrl(row.storage_path, 3600))
+        );
+
+        const firstThumb = signedUrls[0]?.data?.signedUrl;
+        const imagesHtml = signedUrls
+          .map(({ data }) => data
+            ? `<img src="${data.signedUrl}" alt="" style="max-width:${group.length > 1 ? "47%" : "100%"}; display:inline-block; margin:0 2% 0.5rem 0; border-radius:8px;">`
+            : "")
+          .join("");
+
+        const sharedTitle = group[0].title || "";
+        const sharedDescription = group[0].ai_description || "";
 
         const el = document.createElement("div");
         el.className = "card";
         el.style.marginTop = "1rem";
         el.innerHTML = `
           <div class="card-summary">
-            ${signed ? `<img src="${signed.signedUrl}" alt="" class="card-summary-thumb">` : ""}
+            ${firstThumb ? `<img src="${firstThumb}" alt="" class="card-summary-thumb">` : ""}
             <span class="card-summary-title"></span>
             <span class="card-expand-toggle">&#9656;</span>
           </div>
           <div class="card-body">
-            ${signed ? `<img src="${signed.signedUrl}" alt="" style="max-width:100%; border-radius:8px; margin-bottom:0.75rem;">` : ""}
+            ${imagesHtml}
             <label>Title</label>
-            <input type="text" class="ph-title" value="${(photo.title || "").replace(/"/g, "&quot;")}">
+            <input type="text" class="ph-title" value="${sharedTitle.replace(/"/g, "&quot;")}">
             <label>Description</label>
             <div class="rendered-response ph-description-view" style="white-space:pre-wrap;"></div>
-            <textarea class="ph-description" rows="4" style="display:none;">${photo.ai_description || ""}</textarea>
+            <textarea class="ph-description" rows="4" style="display:none;">${sharedDescription}</textarea>
             <button type="button" class="ph-edit-toggle">Edit description</button>
             <label>Move to</label>
             <select class="ph-move">
@@ -333,12 +358,12 @@
               ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
             </select>
             <button type="button" class="ph-save">Save</button>
-            <button type="button" class="ph-delete" style="background:#b3261e;">Delete photo</button>
+            <button type="button" class="ph-delete" style="background:#b3261e;">Delete photo${group.length > 1 ? "s" : ""}</button>
             <p class="ph-error error" style="display:none;"></p>
           </div>
         `;
-        el.querySelector(".card-summary-title").textContent = photo.title || deriveSummary(photo.ai_description);
-        el.querySelector(".ph-description-view").innerHTML = renderClaudeResponse(photo.ai_description) || "No description yet.";
+        el.querySelector(".card-summary-title").textContent = sharedTitle || deriveSummary(sharedDescription);
+        el.querySelector(".ph-description-view").innerHTML = renderClaudeResponse(sharedDescription) || "No description yet.";
         photoGrid.appendChild(el);
         wireCardToggle(el, false); // browsing chapter photos - collapsed by default
 
@@ -367,7 +392,7 @@
           const updates = { title: newTitle || null, ai_description: newDescription };
           if (moveTo) updates.chapter_id = moveTo;
 
-          const { error: updateError } = await sb.from("media").update(updates).eq("id", photo.id);
+          const { error: updateError } = await sb.from("media").update(updates).in("id", group.map(row => row.id));
 
           if (updateError) {
             phError.textContent = updateError.message;
@@ -389,22 +414,23 @@
         });
 
         el.querySelector(".ph-delete").addEventListener("click", async () => {
-          const ok = confirm("Delete this photo? This can't be undone.");
+          const count = group.length;
+          const ok = confirm(`Delete ${count} photo${count > 1 ? "s" : ""}? This can't be undone.`);
           if (!ok) return;
 
           const deleteBtn = el.querySelector(".ph-delete");
           deleteBtn.disabled = true;
           deleteBtn.textContent = "Deleting…";
 
-          await sb.storage.from("houstory-media").remove([photo.storage_path]);
-          const { error: deleteError } = await sb.from("media").delete().eq("id", photo.id);
+          await sb.storage.from("houstory-media").remove(group.map(row => row.storage_path));
+          const { error: deleteError } = await sb.from("media").delete().in("id", group.map(row => row.id));
 
           if (deleteError) {
             const phError = el.querySelector(".ph-error");
             phError.textContent = deleteError.message;
             phError.style.display = "block";
             deleteBtn.disabled = false;
-            deleteBtn.textContent = "Delete photo";
+            deleteBtn.textContent = `Delete photo${count > 1 ? "s" : ""}`;
             return;
           }
 
