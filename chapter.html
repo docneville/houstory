@@ -10,14 +10,13 @@
 <body>
   <header>
     <h1>Houstory</h1>
+    <p id="chapterTitle">Loading…</p>
     <p><a href="app.html">&larr; Back</a></p>
   </header>
   <main>
-    <div id="chapterCard" class="card">
-      <p class="status">Loading…</p>
-    </div>
+    <p id="chapterError" class="error" style="display:none;"></p>
 
-    <div id="photosCard" class="card" style="margin-top:1rem; display:none;">
+    <div id="photosCard" class="card" style="display:none;">
       <p>Photos</p>
       <div id="photoGrid"></div>
     </div>
@@ -29,9 +28,8 @@
 
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const CHAPTER_TYPES = ["renovation", "landscaping", "paint", "appliance", "research", "general"];
-
-    const chapterCard = document.getElementById("chapterCard");
+    const chapterTitleEl = document.getElementById("chapterTitle");
+    const chapterError = document.getElementById("chapterError");
     const photosCard = document.getElementById("photosCard");
     const photoGrid = document.getElementById("photoGrid");
 
@@ -97,187 +95,36 @@
       });
     }
 
-    function typeOptionsHtml(selected) {
-      return CHAPTER_TYPES.map(t => `<option value="${t}" ${t === selected ? "selected" : ""}>${t}</option>`).join("");
-    }
-
-    function statusOptionsHtml(selected) {
-      return ["active", "completed", "archived"]
-        .map(s => `<option value="${s}" ${s === selected ? "selected" : ""}>${s}</option>`)
-        .join("");
-    }
-
+    // houstory-fxl: chapter.html is now read-only for chapter metadata -
+    // adding/editing/deleting/renaming chapters all moved to
+    // manage-chapters.html (houstory-96t.34). This page just shows the
+    // chapter's photos.
     async function loadChapter() {
       if (!chapterId) {
-        chapterCard.innerHTML = `<p class="error">No chapter id given.</p>`;
+        chapterError.textContent = "No chapter id given.";
+        chapterError.style.display = "block";
+        chapterTitleEl.textContent = "";
         return;
       }
 
       const { data: chapter, error } = await sb
         .from("chapters")
-        .select("id, property_id, title, chapter_type, description, status, metadata")
+        .select("id, property_id, title")
         .eq("id", chapterId)
         .single();
 
       if (error || !chapter) {
-        chapterCard.innerHTML = `<p class="error">Chapter not found or not accessible.</p>`;
+        chapterError.textContent = "Chapter not found or not accessible.";
+        chapterError.style.display = "block";
+        chapterTitleEl.textContent = "";
         return;
       }
 
       propertyId = chapter.property_id;
+      chapterTitleEl.textContent = chapter.title;
 
-      // Load other chapters before rendering so the merge dropdown can be
-      // built into the initial HTML rather than added in a second pass.
+      // Still needed for each photo's "Move to" dropdown.
       await loadOtherChapters();
-
-      chapterCard.innerHTML = `
-        <label>Title</label>
-        <input type="text" class="ch-title" value="${chapter.title.replace(/"/g, "&quot;")}">
-        <label>Category</label>
-        <select class="ch-type">${typeOptionsHtml(chapter.chapter_type)}</select>
-        <label>Description</label>
-        <textarea class="ch-description" rows="3">${chapter.description || ""}</textarea>
-        <label>Status</label>
-        <select class="ch-status">${statusOptionsHtml(chapter.status)}</select>
-        <button type="button" class="ch-save">Save changes</button>
-        <button type="button" class="ch-delete" style="background:#b3261e;">Delete chapter</button>
-        <p class="ch-error error" style="display:none;"></p>
-        <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hs-border);">
-          <label>Merge into another chapter</label>
-          <select class="ch-merge-target">
-            <option value="">— choose a chapter —</option>
-            ${otherChapters.map(c => `<option value="${c.id}">${c.title}</option>`).join("")}
-          </select>
-          <button type="button" class="ch-merge-btn" ${otherChapters.length === 0 ? "disabled" : ""}>Merge into selected chapter</button>
-        </div>
-      `;
-
-      chapterCard.querySelector(".ch-save").addEventListener("click", async () => {
-        const saveBtn = chapterCard.querySelector(".ch-save");
-        const chError = chapterCard.querySelector(".ch-error");
-        chError.style.display = "none";
-        saveBtn.disabled = true;
-        saveBtn.textContent = "Saving…";
-
-        const { error: updateError } = await sb
-          .from("chapters")
-          .update({
-            title: chapterCard.querySelector(".ch-title").value.trim(),
-            chapter_type: chapterCard.querySelector(".ch-type").value,
-            description: chapterCard.querySelector(".ch-description").value.trim() || null,
-            status: chapterCard.querySelector(".ch-status").value,
-          })
-          .eq("id", chapterId);
-
-        saveBtn.disabled = false;
-        saveBtn.textContent = "Save changes";
-
-        if (updateError) {
-          chError.textContent = updateError.message;
-          chError.style.display = "block";
-          return;
-        }
-
-        saveBtn.textContent = "Saved";
-        setTimeout(() => { saveBtn.textContent = "Save changes"; }, 1500);
-      });
-
-      chapterCard.querySelector(".ch-delete").addEventListener("click", async () => {
-        const ok = confirm(`Delete "${chapter.title}"? Its photos will NOT be deleted - they'll become unfiled and show up in the Unfiled section of the Analyze page.`);
-        if (!ok) return;
-
-        const deleteBtn = chapterCard.querySelector(".ch-delete");
-        deleteBtn.disabled = true;
-        deleteBtn.textContent = "Deleting…";
-
-        // Unfile photos back to pending_review BEFORE deleting the chapter -
-        // the FK is ON DELETE SET NULL, but that alone would leave them
-        // status='confirmed' with no chapter, invisible to the "needs
-        // review" query on the upload page.
-        await sb.from("media").update({ status: "pending_review" }).eq("chapter_id", chapterId);
-
-        const { error: deleteError } = await sb.from("chapters").delete().eq("id", chapterId);
-
-        if (deleteError) {
-          const chError = chapterCard.querySelector(".ch-error");
-          chError.textContent = deleteError.message;
-          chError.style.display = "block";
-          deleteBtn.disabled = false;
-          deleteBtn.textContent = "Delete chapter";
-          return;
-        }
-
-        window.location.href = "app.html";
-      });
-
-      chapterCard.querySelector(".ch-merge-btn").addEventListener("click", async () => {
-        const mergeSelect = chapterCard.querySelector(".ch-merge-target");
-        const targetId = mergeSelect.value;
-        if (!targetId) {
-          alert("Choose a chapter to merge into first.");
-          return;
-        }
-        const targetTitle = mergeSelect.selectedOptions[0].textContent;
-
-        const ok = confirm(`Merge "${chapter.title}" into "${targetTitle}"? All its photos will move there, and "${chapter.title}" will be deleted.`);
-        if (!ok) return;
-
-        const mergeBtn = chapterCard.querySelector(".ch-merge-btn");
-        const chError = chapterCard.querySelector(".ch-error");
-        chError.style.display = "none";
-        mergeBtn.disabled = true;
-        mergeBtn.textContent = "Merging…";
-
-        const { error: moveError } = await sb
-          .from("media")
-          .update({ chapter_id: targetId })
-          .eq("chapter_id", chapterId);
-
-        if (moveError) {
-          chError.textContent = moveError.message;
-          chError.style.display = "block";
-          mergeBtn.disabled = false;
-          mergeBtn.textContent = "Merge into selected chapter";
-          return;
-        }
-
-        // Fold this chapter's metadata/description into the target's,
-        // preferring the target's own values where both have something -
-        // it's the chapter that survives.
-        const { data: targetChapter, error: targetErr } = await sb
-          .from("chapters")
-          .select("metadata, description")
-          .eq("id", targetId)
-          .single();
-
-        if (targetErr) {
-          chError.textContent = targetErr.message;
-          chError.style.display = "block";
-          mergeBtn.disabled = false;
-          mergeBtn.textContent = "Merge into selected chapter";
-          return;
-        }
-
-        const mergedMetadata = { ...(chapter.metadata || {}), ...(targetChapter.metadata || {}) };
-        const mergedDescription = targetChapter.description || chapter.description || null;
-
-        await sb
-          .from("chapters")
-          .update({ metadata: mergedMetadata, description: mergedDescription })
-          .eq("id", targetId);
-
-        const { error: deleteError } = await sb.from("chapters").delete().eq("id", chapterId);
-
-        if (deleteError) {
-          chError.textContent = deleteError.message;
-          chError.style.display = "block";
-          mergeBtn.disabled = false;
-          mergeBtn.textContent = "Merge into selected chapter";
-          return;
-        }
-
-        window.location.href = `chapter.html?id=${targetId}`;
-      });
 
       await loadPhotos();
     }
