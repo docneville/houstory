@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory — Manage Chapters</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p><a href="app.html">&larr; Back</a></p>
+  </header>
+  <main>
+    <div id="chapterList"></div>
+
+    <div class="card" style="margin-top:1rem;">
+      <p>New chapter</p>
+      <form id="newChapterForm">
+        <label for="newChapterTitle">Name</label>
+        <input type="text" id="newChapterTitle" placeholder="e.g. Kitchen Renovation, Paint Colors" required>
+        <button type="submit" id="newChapterBtn">Create chapter</button>
+      </form>
+      <p id="newChapterError" class="error" style="display:none;"></p>
+    </div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const chapterList = document.getElementById("chapterList");
+    const newChapterForm = document.getElementById("newChapterForm");
+    const newChapterBtn = document.getElementById("newChapterBtn");
+    const newChapterError = document.getElementById("newChapterError");
+
+    let propertyId = null;
+    let currentUserId = null;
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function statusOptionsHtml(selected) {
+      return ["active", "completed", "archived"]
+        .map(s => `<option value="${s}" ${s === selected ? "selected" : ""}>${s}</option>`)
+        .join("");
+    }
+
+    async function requireSession() {
+      const { data: { session }, error } = await sb.auth.getSession();
+      if (error || !session) {
+        window.location.href = "login.html";
+        throw new Error("Session expired - redirecting to sign in.");
+      }
+      return session;
+    }
+
+    async function loadChapters() {
+      const { data: chapters, error } = await sb
+        .from("chapters")
+        .select("id, title, description, status")
+        .eq("property_id", propertyId)
+        .order("title", { ascending: true });
+
+      if (error) {
+        chapterList.innerHTML = `<p class="error">${error.message}</p>`;
+        return;
+      }
+
+      if (!chapters || chapters.length === 0) {
+        chapterList.innerHTML = `<p style="color: var(--hs-muted);">No chapters yet - create one below.</p>`;
+        return;
+      }
+
+      chapterList.innerHTML = "";
+
+      for (const chapter of chapters) {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.style.marginTop = "1rem";
+        el.innerHTML = `
+          <label>Name</label>
+          <input type="text" class="mc-title" value="${escapeHtml(chapter.title)}">
+          <label>Description</label>
+          <textarea class="mc-description" rows="2">${escapeHtml(chapter.description || "")}</textarea>
+          <label>Status</label>
+          <select class="mc-status">${statusOptionsHtml(chapter.status)}</select>
+          <button type="button" class="mc-save">Save changes</button>
+          <button type="button" class="mc-delete" style="background:#b3261e;">Delete chapter</button>
+          <p class="mc-error error" style="display:none;"></p>
+        `;
+        chapterList.appendChild(el);
+
+        el.querySelector(".mc-save").addEventListener("click", async () => {
+          const saveBtn = el.querySelector(".mc-save");
+          const mcError = el.querySelector(".mc-error");
+          mcError.style.display = "none";
+          saveBtn.disabled = true;
+          saveBtn.textContent = "Saving…";
+
+          const { error: updateError } = await sb
+            .from("chapters")
+            .update({
+              title: el.querySelector(".mc-title").value.trim(),
+              description: el.querySelector(".mc-description").value.trim() || null,
+              status: el.querySelector(".mc-status").value,
+            })
+            .eq("id", chapter.id);
+
+          saveBtn.disabled = false;
+
+          if (updateError) {
+            mcError.textContent = updateError.message;
+            mcError.style.display = "block";
+            saveBtn.textContent = "Save changes";
+            return;
+          }
+
+          saveBtn.textContent = "Saved";
+          setTimeout(() => { saveBtn.textContent = "Save changes"; }, 1500);
+        });
+
+        el.querySelector(".mc-delete").addEventListener("click", async () => {
+          const ok = confirm(`Delete "${chapter.title}"? Its photos will NOT be deleted - they'll become unfiled and show up in the Unfiled section of the Add page.`);
+          if (!ok) return;
+
+          const deleteBtn = el.querySelector(".mc-delete");
+          deleteBtn.disabled = true;
+          deleteBtn.textContent = "Deleting…";
+
+          // Unfile photos back to pending_review BEFORE deleting the chapter -
+          // the FK is ON DELETE SET NULL, but that alone would leave them
+          // status='confirmed' with no chapter, invisible to the "needs
+          // review" query on the upload page.
+          await sb.from("media").update({ status: "pending_review" }).eq("chapter_id", chapter.id);
+
+          const { error: deleteError } = await sb.from("chapters").delete().eq("id", chapter.id);
+
+          if (deleteError) {
+            const mcError = el.querySelector(".mc-error");
+            mcError.textContent = deleteError.message;
+            mcError.style.display = "block";
+            deleteBtn.disabled = false;
+            deleteBtn.textContent = "Delete chapter";
+            return;
+          }
+
+          el.remove();
+        });
+      }
+    }
+
+    newChapterForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      newChapterError.style.display = "none";
+      newChapterBtn.disabled = true;
+      newChapterBtn.textContent = "Creating…";
+
+      const title = document.getElementById("newChapterTitle").value.trim();
+
+      const { error: insertError } = await sb
+        .from("chapters")
+        .insert({ property_id: propertyId, chapter_type: "general", title, created_by: currentUserId });
+
+      newChapterBtn.disabled = false;
+      newChapterBtn.textContent = "Create chapter";
+
+      if (insertError) {
+        newChapterError.textContent = insertError.message;
+        newChapterError.style.display = "block";
+        return;
+      }
+
+      newChapterForm.reset();
+      await loadChapters();
+    });
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      let session;
+      try {
+        session = await requireSession();
+      } catch {
+        return;
+      }
+      currentUserId = session.user.id;
+
+      const { data: properties, error } = await sb
+        .from("properties")
+        .select("id")
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (error || !properties || properties.length === 0) {
+        chapterList.innerHTML = `<p class="error">No home set up yet - go back and create one first.</p>`;
+        return;
+      }
+
+      propertyId = properties[0].id;
+      await loadChapters();
+    });
+  </script>
+</body>
+</html>

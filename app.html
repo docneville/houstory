@@ -36,26 +36,11 @@
 
     <div id="chaptersCard" class="card" style="display:none;">
       <p>Chapters</p>
-      <p><a href="upload.html">Add</a></p>
+      <p><a href="upload.html">Add</a> &middot; <a href="manage-chapters.html">Manage Chapters</a></p>
       <div id="chapterButtons" class="chapter-buttons"></div>
       <p id="emptyState" style="display:none; color: var(--hs-muted);">
         No chapters yet.
       </p>
-      <form id="newChapterForm" style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hs-border);">
-        <label>New chapter name</label>
-        <input type="text" id="newChapterTitle" placeholder="e.g. Kitchen Renovation, Paint Colors" required>
-        <label>Category</label>
-        <select id="newChapterType">
-          <option value="renovation">renovation</option>
-          <option value="landscaping">landscaping</option>
-          <option value="paint">paint</option>
-          <option value="appliance">appliance</option>
-          <option value="research">research</option>
-          <option value="general" selected>general</option>
-        </select>
-        <button type="submit" id="newChapterBtn">Create chapter</button>
-      </form>
-      <p id="newChapterError" class="error" style="display:none;"></p>
     </div>
   </main>
 
@@ -79,9 +64,6 @@
     // order; anything else (older chapters, or new ones added later via
     // Manage Chapters) sorts after, alphabetically.
     const CHAPTER_ORDER = ["Appliances", "Paint", "Projects", "Contractors", "Iconic Photos", "Materials", "Landscaping", "Repairs"];
-    const newChapterForm = document.getElementById("newChapterForm");
-    const newChapterBtn = document.getElementById("newChapterBtn");
-    const newChapterError = document.getElementById("newChapterError");
 
     let currentPropertyId = null;
 
@@ -228,38 +210,6 @@
       }
 
       createCard.style.display = "none";
-      await loadProperty(user.id);
-    });
-
-    newChapterForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      newChapterError.style.display = "none";
-      newChapterBtn.disabled = true;
-      newChapterBtn.textContent = "Creating…";
-
-      let user;
-      try {
-        user = (await requireSession()).user;
-      } catch {
-        return; // requireSession() already redirected to login.html
-      }
-      const title = document.getElementById("newChapterTitle").value.trim();
-      const chapterType = document.getElementById("newChapterType").value;
-
-      const { error: insertError } = await sb
-        .from("chapters")
-        .insert({ property_id: currentPropertyId, chapter_type: chapterType, title, created_by: user.id });
-
-      newChapterBtn.disabled = false;
-      newChapterBtn.textContent = "Create chapter";
-
-      if (insertError) {
-        newChapterError.textContent = insertError.message;
-        newChapterError.style.display = "block";
-        return;
-      }
-
-      newChapterForm.reset();
       await loadProperty(user.id);
     });
 
