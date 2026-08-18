@@ -35,8 +35,8 @@
 
     <div id="chaptersCard" class="card" style="display:none;">
       <p>Chapters</p>
-      <p><a href="upload.html">Analyze photos</a></p>
-      <ul id="chapterList" class="chapter-list"></ul>
+      <p><a href="upload.html">Add</a></p>
+      <div id="chapterButtons" class="chapter-buttons"></div>
       <p id="emptyState" style="display:none; color: var(--hs-muted);">
         No chapters yet.
       </p>
@@ -70,8 +70,14 @@
     const propertyForm = document.getElementById("propertyForm");
     const createError = document.getElementById("createError");
     const createBtn = document.getElementById("createBtn");
-    const chapterList = document.getElementById("chapterList");
+    const chapterButtons = document.getElementById("chapterButtons");
     const emptyState = document.getElementById("emptyState");
+
+    // Preferred display order for houstory-96t.33's starting taxonomy -
+    // chapters matching one of these names (exactly) sort first, in this
+    // order; anything else (older chapters, or new ones added later via
+    // Manage Chapters) sorts after, alphabetically.
+    const CHAPTER_ORDER = ["Appliances", "Paint", "Projects", "Contractors", "Iconic Photos", "Materials", "Landscaping", "Repairs"];
     const newChapterForm = document.getElementById("newChapterForm");
     const newChapterBtn = document.getElementById("newChapterBtn");
     const newChapterError = document.getElementById("newChapterError");
@@ -138,8 +144,17 @@
         return;
       }
 
-      chapterList.innerHTML = chapters
-        .map(c => `<li><a href="chapter.html?id=${c.id}"><strong>${c.title}</strong> — ${c.chapter_type} (${c.status})</a></li>`)
+      const sorted = [...chapters].sort((a, b) => {
+        const ai = CHAPTER_ORDER.indexOf(a.title);
+        const bi = CHAPTER_ORDER.indexOf(b.title);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return a.title.localeCompare(b.title);
+      });
+
+      chapterButtons.innerHTML = sorted
+        .map(c => `<a class="chapter-btn" href="chapter.html?id=${c.id}">${c.title}</a>`)
         .join("");
     }
 
