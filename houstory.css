@@ -33,6 +33,18 @@ header p {
   margin: 0.25rem 0 0;
 }
 
+.hs-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.hs-logo-img {
+  max-width: 260px;
+  width: 100%;
+  height: auto;
+}
+
 main {
   max-width: 640px;
   margin: 0 auto;
