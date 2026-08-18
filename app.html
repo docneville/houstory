@@ -108,16 +108,29 @@
     // sign-in has nothing to seed with, so it just creates an empty row for
     // profile.html to fill in later.
     async function ensureProfile(user) {
-      const { data: existing } = await sb.from("profiles").select("id").eq("id", user.id).maybeSingle();
-      if (existing) return;
-
       const meta = user.user_metadata || {};
-      await sb.from("profiles").insert({
-        id: user.id,
-        first_name: meta.given_name || meta.full_name?.split(" ")[0] || null,
-        last_name: meta.family_name || null,
-        avatar_url: meta.avatar_url || meta.picture || null,
-      });
+      const { data: existing } = await sb.from("profiles").select("id, first_name, last_name, avatar_url").eq("id", user.id).maybeSingle();
+
+      if (!existing) {
+        await sb.from("profiles").insert({
+          id: user.id,
+          first_name: meta.given_name || meta.full_name?.split(" ")[0] || null,
+          last_name: meta.family_name || null,
+          avatar_url: meta.avatar_url || meta.picture || null,
+        });
+        return;
+      }
+
+      // Backfill fields still empty on an existing row - e.g. a profile
+      // created before a Google sign-in was linked (email/password first),
+      // which left avatar_url (and possibly name) unset.
+      const patch = {};
+      if (!existing.avatar_url && (meta.avatar_url || meta.picture)) patch.avatar_url = meta.avatar_url || meta.picture;
+      if (!existing.first_name && (meta.given_name || meta.full_name)) patch.first_name = meta.given_name || meta.full_name?.split(" ")[0];
+      if (!existing.last_name && meta.family_name) patch.last_name = meta.family_name;
+      if (Object.keys(patch).length > 0) {
+        await sb.from("profiles").update(patch).eq("id", user.id);
+      }
     }
 
     async function loadProperty(userId) {
