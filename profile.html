@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Houstory — Profile</title>
+  <link rel="stylesheet" href="houstory.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <header>
+    <h1>Houstory</h1>
+    <p><a href="app.html">&larr; Back</a></p>
+  </header>
+  <main>
+    <div id="profileCard" class="card">
+      <p class="status">Loading…</p>
+    </div>
+  </main>
+
+  <script>
+    const SUPABASE_URL = "https://yrsvewqvkbjfwzpldjjy.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlyc3Zld3F2a2JqZnd6cGxkamp5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5ODEzMzMsImV4cCI6MjEwMDU1NzMzM30.SZrhC-HvbbRM2_pKV_WA-OE5uIic0f7ZuMfytcgNofA";
+
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const profileCard = document.getElementById("profileCard");
+
+    async function requireSession() {
+      const { data: { session }, error } = await sb.auth.getSession();
+      if (error || !session) {
+        window.location.href = "login.html";
+        throw new Error("Session expired - redirecting to sign in.");
+      }
+      return session;
+    }
+
+    async function loadProfile() {
+      let session;
+      try {
+        session = await requireSession();
+      } catch {
+        return;
+      }
+
+      const { data: profile } = await sb
+        .from("profiles")
+        .select("first_name, last_name, avatar_url")
+        .eq("id", session.user.id)
+        .maybeSingle();
+
+      profileCard.innerHTML = `
+        ${profile?.avatar_url ? `<img src="${profile.avatar_url}" alt="" style="width:64px; height:64px; border-radius:50%; margin-bottom:0.75rem;">` : ""}
+        <label>First name</label>
+        <input type="text" class="pf-first-name" value="${(profile?.first_name || "").replace(/"/g, "&quot;")}">
+        <label>Last name</label>
+        <input type="text" class="pf-last-name" value="${(profile?.last_name || "").replace(/"/g, "&quot;")}">
+        <label>Email</label>
+        <input type="text" value="${session.user.email || ""}" disabled>
+        <button type="button" class="pf-save">Save changes</button>
+        <p class="pf-error error" style="display:none;"></p>
+        <button type="button" class="pf-signout" style="background:#b3261e;">Sign out</button>
+      `;
+
+      profileCard.querySelector(".pf-save").addEventListener("click", async () => {
+        const saveBtn = profileCard.querySelector(".pf-save");
+        const errEl = profileCard.querySelector(".pf-error");
+        errEl.style.display = "none";
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+
+        const { error } = await sb
+          .from("profiles")
+          .upsert({
+            id: session.user.id,
+            first_name: profileCard.querySelector(".pf-first-name").value.trim() || null,
+            last_name: profileCard.querySelector(".pf-last-name").value.trim() || null,
+          });
+
+        saveBtn.disabled = false;
+
+        if (error) {
+          errEl.textContent = error.message;
+          errEl.style.display = "block";
+          saveBtn.textContent = "Save changes";
+          return;
+        }
+
+        saveBtn.textContent = "Saved";
+        setTimeout(() => { saveBtn.textContent = "Save changes"; }, 1500);
+      });
+
+      profileCard.querySelector(".pf-signout").addEventListener("click", async () => {
+        await sb.auth.signOut();
+        window.location.href = "index.html";
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", loadProfile);
+  </script>
+</body>
+</html>

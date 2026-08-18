@@ -11,6 +11,7 @@
   <header>
     <h1>Houstory</h1>
     <p id="propertyLabel">Loading…</p>
+    <p><a href="profile.html">Profile</a></p>
   </header>
   <main>
     <div id="createPropertyCard" class="card" style="display:none;">
@@ -99,6 +100,24 @@
         throw new Error("Session expired - redirecting to sign in.");
       }
       return session;
+    }
+
+    // houstory-96t.11: ensure a profiles row exists for whoever just signed
+    // in, regardless of method (Google or email+password) - Google gives us
+    // given_name/family_name via user_metadata on first sign-in; email
+    // sign-in has nothing to seed with, so it just creates an empty row for
+    // profile.html to fill in later.
+    async function ensureProfile(user) {
+      const { data: existing } = await sb.from("profiles").select("id").eq("id", user.id).maybeSingle();
+      if (existing) return;
+
+      const meta = user.user_metadata || {};
+      await sb.from("profiles").insert({
+        id: user.id,
+        first_name: meta.given_name || meta.full_name?.split(" ")[0] || null,
+        last_name: meta.family_name || null,
+        avatar_url: meta.avatar_url || meta.picture || null,
+      });
     }
 
     async function loadProperty(userId) {
@@ -237,6 +256,7 @@
         window.location.href = "login.html";
         return;
       }
+      await ensureProfile(session.user);
       await loadProperty(session.user.id);
     });
   </script>
