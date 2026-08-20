@@ -39,6 +39,35 @@
     let propertyId = null;
     let otherChapters = [];
 
+    async function requireSession() {
+      const { data: { session }, error } = await sb.auth.getSession();
+      if (error || !session) {
+        window.location.href = "login.html";
+        throw new Error("Session expired - redirecting to sign in.");
+      }
+      return session;
+    }
+
+    // Using a raw fetch here rather than sb.functions.invoke() - invoke() is
+    // unreliably flaky on this endpoint once it takes a few seconds (image
+    // download + Claude call), while a plain fetch with the same headers
+    // works fine. Matches upload.html's callAnalyze().
+    async function callAnalyze(body) {
+      const session = await requireSession();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-media`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`,
+          "apikey": SUPABASE_ANON_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+      return result;
+    }
+
     function escapeHtml(str) {
       return str
         .replace(/&/g, "&amp;")
@@ -199,6 +228,11 @@
             <div class="rendered-response ph-description-view" style="white-space:pre-wrap;"></div>
             <textarea class="ph-description" rows="4" style="display:none;">${sharedDescription}</textarea>
             <button type="button" class="ph-edit-toggle">Edit description</button>
+            <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hs-border);">
+              <label>Ask Claude something new</label>
+              <textarea class="ph-rerun-instructions" rows="2" placeholder="e.g. Find the manual for this model, or: actually this is a Bosch, look again"></textarea>
+              <button type="button" class="ph-rerun-btn">Re-run analysis</button>
+            </div>
             <label>Move to</label>
             <select class="ph-move">
               <option value="">— keep here —</option>
@@ -223,6 +257,35 @@
           textarea.style.display = nowEditing ? "block" : "none";
           if (!nowEditing) view.innerHTML = renderClaudeResponse(textarea.value) || "No description yet.";
           editBtn.textContent = nowEditing ? "Done editing" : "Edit description";
+        });
+
+        el.querySelector(".ph-rerun-btn").addEventListener("click", async () => {
+          const rerunBtn = el.querySelector(".ph-rerun-btn");
+          const phError = el.querySelector(".ph-error");
+          phError.style.display = "none";
+          rerunBtn.disabled = true;
+          rerunBtn.textContent = "Asking Claude…";
+
+          const rerunInstructions = el.querySelector(".ph-rerun-instructions").value.trim();
+
+          let result;
+          try {
+            result = await callAnalyze({ media_ids: group.map(row => row.id), instructions: rerunInstructions });
+          } catch (rerunErr) {
+            phError.textContent = rerunErr.message;
+            phError.style.display = "block";
+            rerunBtn.disabled = false;
+            rerunBtn.textContent = "Re-run analysis";
+            return;
+          }
+
+          el.querySelector(".ph-description-view").innerHTML = renderClaudeResponse(result.response) || "No description yet.";
+          el.querySelector(".ph-description").value = result.response;
+          const titleInput = el.querySelector(".ph-title");
+          el.querySelector(".card-summary-title").textContent = titleInput.value.trim() || deriveSummary(result.response);
+          el.querySelector(".ph-rerun-instructions").value = "";
+          rerunBtn.disabled = false;
+          rerunBtn.textContent = "Re-run analysis";
         });
 
         el.querySelector(".ph-save").addEventListener("click", async () => {

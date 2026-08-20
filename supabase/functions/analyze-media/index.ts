@@ -84,7 +84,7 @@ serve(async (req: Request): Promise<Response> => {
 
   const { data: mediaRows, error: mediaErr } = await sb
     .from("media")
-    .select("id, storage_path, kind")
+    .select("id, storage_path, kind, ai_description")
     .in("id", media_ids);
 
   if (mediaErr || !mediaRows || mediaRows.length !== media_ids.length) {
@@ -112,9 +112,20 @@ serve(async (req: Request): Promise<Response> => {
 
   if (downloads.some((d) => d === null)) return err("failed to download one or more media items", 500);
 
+  // houstory-96t.17: re-running analysis on already-saved photos (a batch
+  // shares one ai_description) is a refinement, not a from-scratch call -
+  // give Claude its own prior answer as context so "you said X before, but
+  // actually..." and targeted follow-ups ("now find the manual") land
+  // correctly instead of re-describing the photo from nothing. Freshly
+  // uploaded media has no ai_description yet, so this is a no-op then.
+  const previousResponse = orderedMedia.find((m: any) => m.ai_description)?.ai_description;
+  const promptText = previousResponse
+    ? `Your previous analysis of this photo:\n\n${previousResponse}\n\n---\n\nNew request: ${instructions}`
+    : instructions;
+
   const content = [
     ...downloads.map((d) => ({ type: "image", source: { type: "base64", media_type: d!.mediaType, data: d!.base64 } })),
-    { type: "text", text: instructions },
+    { type: "text", text: promptText },
   ];
 
   const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {

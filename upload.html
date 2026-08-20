@@ -352,6 +352,11 @@
           <div class="card-body">
             ${thumbsHtml}
             <div class="rendered-response" style="white-space:pre-wrap;"></div>
+            <div style="margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hs-border);">
+              <label>Ask Claude something new</label>
+              <textarea class="unfiled-rerun-instructions" rows="2" placeholder="e.g. Find the manual for this model, or: actually this is a Bosch, look again"></textarea>
+              <button type="button" class="unfiled-rerun-btn">Re-run analysis</button>
+            </div>
             <label>File into a chapter</label>
             <select class="unfiled-target">
               <option value="__new__">Create new chapter</option>
@@ -372,6 +377,33 @@
         card.querySelector(".rendered-response").innerHTML = renderClaudeResponse(group[0].ai_description) || "Not analyzed yet.";
         needsReviewEl.appendChild(card);
         wireCardToggle(card, false); // browsing gallery - collapsed by default
+
+        card.querySelector(".unfiled-rerun-btn").addEventListener("click", async () => {
+          const rerunBtn = card.querySelector(".unfiled-rerun-btn");
+          const errEl = card.querySelector(".unfiled-error");
+          errEl.style.display = "none";
+          rerunBtn.disabled = true;
+          rerunBtn.textContent = "Asking Claude…";
+
+          const rerunInstructions = card.querySelector(".unfiled-rerun-instructions").value.trim();
+
+          let result;
+          try {
+            result = await callAnalyze({ media_ids: group.map(row => row.id), instructions: rerunInstructions });
+          } catch (rerunErr) {
+            errEl.textContent = rerunErr.message;
+            errEl.style.display = "block";
+            rerunBtn.disabled = false;
+            rerunBtn.textContent = "Re-run analysis";
+            return;
+          }
+
+          card.querySelector(".rendered-response").innerHTML = renderClaudeResponse(result.response) || "Not analyzed yet.";
+          card.querySelector(".card-summary-title").textContent = deriveSummary(result.response);
+          card.querySelector(".unfiled-rerun-instructions").value = "";
+          rerunBtn.disabled = false;
+          rerunBtn.textContent = "Re-run analysis";
+        });
 
         const targetSelect = card.querySelector(".unfiled-target");
         const newChapterFields = card.querySelector(".unfiled-new-chapter-fields");
