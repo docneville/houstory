@@ -295,6 +295,23 @@
       loadUnfiled();
     });
 
+    // houstory-96t.7: fold the user's submit-time note (whatever they typed
+    // into Instructions for Claude - not Claude's own response) into the
+    // target chapter's description as its own line, so context like "used
+    // in kids bedroom" is visible on the chapter itself rather than buried
+    // on the individual photo. Appends rather than overwrites so multiple
+    // filed groups build a running log instead of clobbering each other.
+    async function appendNoteToChapter(chapterId, note) {
+      if (!note) return;
+
+      const { data: chapterRow, error } = await sb.from("chapters").select("description").eq("id", chapterId).single();
+      if (error) return; // non-critical - filing itself already succeeded
+
+      const existing = (chapterRow.description || "").trim();
+      const newDescription = existing ? `${existing}\n- ${note}` : `- ${note}`;
+      await sb.from("chapters").update({ description: newDescription }).eq("id", chapterId);
+    }
+
     async function refreshOpenChapters() {
       const { data, error } = await sb
         .from("chapters")
@@ -473,6 +490,8 @@
             .from("media")
             .update({ chapter_id: targetId, status: "confirmed" })
             .in("id", group.map(row => row.id));
+
+          if (!fileError) await appendNoteToChapter(targetId, group[0].caption);
 
           if (fileError) {
             errEl.textContent = fileError.message;

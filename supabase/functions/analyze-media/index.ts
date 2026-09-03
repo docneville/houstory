@@ -56,7 +56,14 @@ const SYSTEM_PROMPT =
   "You have a web_search tool available. When the user's instructions call for it - e.g. finding a product's manual, a retailer's contact info, " +
   "warranty/recall info, or local repair services for a brand/model you've identified - use it and give concrete results: actual links, " +
   "business names, addresses, phone numbers. Don't just describe how someone could search for these themselves. If the instructions don't call " +
-  "for a lookup, don't force a search.";
+  "for a lookup, don't force a search. " +
+  // houstory-96t.7: paint cans often split color info across two spots - a
+  // printed lid label with the brand/product line, and a separate sticker
+  // (usually on the side, added at the point of sale) with the actual
+  // matched color name, code, and formula - that sticker is easy to miss if
+  // only the lid is examined.
+  "If the photo is a paint can, check both the lid and the side of the can - the precise color name and code are usually on a sticker added when " +
+  "the paint was color-matched at the store, separate from the printed brand/product label.";
 
 serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { status: 200, headers: corsHeaders });
