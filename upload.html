@@ -21,6 +21,10 @@
           Selecting more than one sends them to Claude together, as one submission.
         </p>
         <label for="instructions">Instructions for Claude</label>
+        <div class="instruction-chips">
+          <button type="button" class="hs-chip" data-instructions="Read the paint can label and tell me the brand, color name, color code, and sheen.">Paint</button>
+          <button type="button" class="hs-chip" data-instructions="Find the model and serial number sticker (often on a door frame, inside a door, or the back panel) and tell me the brand.">Appliance</button>
+        </div>
         <textarea id="instructions" rows="3" placeholder="e.g. Look for the model and serial number on this appliance's label, and tell me the brand. Leave blank for a general description."></textarea>
         <p style="color: var(--hs-muted); margin: 0.25rem 0 0; font-size: 0.9rem;">
           Claude can search the web when it helps (finding a manual, a retailer's contact info,
@@ -59,6 +63,19 @@
     // unfiled group can immediately target a chapter just created for the
     // first one.
     let openChapters = [];
+
+    // houstory-96t.18: category chips fill in a tailored starting prompt -
+    // still just plain text in the instructions field, editable/removable
+    // like anything the user typed themselves. Not automatic classification
+    // (that was tried and backed out in houstory-96t.23) - just a shortcut
+    // to a good starting point for common categories.
+    document.querySelectorAll(".hs-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const instructionsField = document.getElementById("instructions");
+        instructionsField.value = chip.dataset.instructions;
+        instructionsField.focus();
+      });
+    });
 
     function showError(msg) {
       errorBox.textContent = msg;

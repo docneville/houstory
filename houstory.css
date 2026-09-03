@@ -170,6 +170,28 @@ button:disabled {
   color: var(--hs-accent);
 }
 
+.instruction-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.hs-chip {
+  margin-top: 0;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--hs-border);
+  color: var(--hs-text);
+  font-size: 0.85rem;
+}
+
+.hs-chip:hover {
+  background: var(--hs-bg);
+  border-color: var(--hs-accent);
+}
+
 .card-summary {
   display: flex;
   align-items: center;
